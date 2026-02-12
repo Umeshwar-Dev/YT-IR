@@ -148,9 +148,8 @@ class YoutubeScraper(BaseYoutubeScraper):
                 logger.error("Failed to process video", video_id=video_id)
                 return None, []
 
-            # Save video to database if channel_id is provided
-            if channel_id:
-                await self.video_scraper.save_videos_to_db([video_metadata], channel_id)
+            # Save video to database (with or without channel)
+            await self.video_scraper.save_videos_to_db([video_metadata], channel_id)
 
             logger.info(
                 "Single video scrape completed",

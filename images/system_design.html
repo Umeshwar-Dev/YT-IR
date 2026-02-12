@@ -1,0 +1,1626 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>YT-Navigator — System Design</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Syne:wght@400;600;700;800&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0a0f;
+    --surface: #111118;
+    --card: #16161f;
+    --border: #1e1e2e;
+    --border-bright: #2a2a3d;
+    --red: #ff3b3b;
+    --orange: #ff7a1a;
+    --yellow: #ffcc00;
+    --green: #00e676;
+    --cyan: #00d4ff;
+    --blue: #4a9eff;
+    --purple: #a855f7;
+    --pink: #ff6b9d;
+    --white: #f0f0f8;
+    --muted: #5a5a7a;
+    --text: #c8c8e0;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'DM Sans', sans-serif;
+    font-size: 14px;
+    line-height: 1.6;
+    overflow-x: hidden;
+  }
+
+  /* ── NOISE TEXTURE ── */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.03'/%3E%3C/svg%3E");
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* ── HEADER ── */
+  header {
+    padding: 60px 60px 40px;
+    border-bottom: 1px solid var(--border);
+    position: relative;
+    overflow: hidden;
+  }
+  header::after {
+    content: '';
+    position: absolute;
+    top: -80px;
+    right: -80px;
+    width: 400px;
+    height: 400px;
+    background: radial-gradient(circle, rgba(255,59,59,0.07) 0%, transparent 70%);
+    pointer-events: none;
+  }
+  .header-tag {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--red);
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .header-tag::before {
+    content: '';
+    width: 20px;
+    height: 1px;
+    background: var(--red);
+  }
+  h1 {
+    font-family: 'Syne', sans-serif;
+    font-size: clamp(32px, 5vw, 56px);
+    font-weight: 800;
+    color: var(--white);
+    letter-spacing: -1.5px;
+    line-height: 1.1;
+    margin-bottom: 12px;
+  }
+  h1 span { color: var(--red); }
+  .header-sub {
+    color: var(--muted);
+    font-size: 15px;
+    max-width: 600px;
+  }
+
+  /* ── LAYOUT ── */
+  main {
+    padding: 0 60px 80px;
+    max-width: 1400px;
+    margin: 0 auto;
+    position: relative;
+    z-index: 1;
+  }
+
+  /* ── SECTION ── */
+  .section {
+    margin-top: 70px;
+  }
+  .section-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--muted);
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+  }
+  .section-title {
+    font-family: 'Syne', sans-serif;
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--white);
+    margin-bottom: 24px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .section-title::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: linear-gradient(to right, var(--border-bright), transparent);
+  }
+
+  /* ── OVERVIEW GRID ── */
+  .overview-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    margin-bottom: 40px;
+  }
+  .stat-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px;
+    position: relative;
+    overflow: hidden;
+  }
+  .stat-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    background: var(--accent);
+  }
+  .stat-val {
+    font-family: 'Syne', sans-serif;
+    font-size: 28px;
+    font-weight: 800;
+    color: var(--white);
+    line-height: 1;
+    margin-bottom: 4px;
+  }
+  .stat-key {
+    font-size: 12px;
+    color: var(--muted);
+    font-family: 'JetBrains Mono', monospace;
+    letter-spacing: 0.5px;
+  }
+
+  /* ── FLOW DIAGRAM ── */
+  .flow-container {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 40px;
+    position: relative;
+    overflow: hidden;
+  }
+  .flow-container::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(ellipse at 50% 0%, rgba(0,212,255,0.04) 0%, transparent 60%);
+    pointer-events: none;
+  }
+
+  /* Pipeline flow */
+  .pipeline {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    margin-bottom: 32px;
+    position: relative;
+    flex-wrap: wrap;
+    row-gap: 16px;
+  }
+  .pipe-step {
+    background: var(--card);
+    border: 1px solid var(--border-bright);
+    border-radius: 8px;
+    padding: 14px 18px;
+    position: relative;
+    min-width: 140px;
+    text-align: center;
+    flex-shrink: 0;
+    transition: border-color 0.2s;
+  }
+  .pipe-step:hover { border-color: var(--accent); }
+  .pipe-step .icon {
+    font-size: 22px;
+    margin-bottom: 6px;
+    display: block;
+  }
+  .pipe-step .label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--white);
+    font-weight: 500;
+    display: block;
+  }
+  .pipe-step .sub {
+    font-size: 10px;
+    color: var(--muted);
+    margin-top: 2px;
+    display: block;
+  }
+  .pipe-arrow {
+    color: var(--muted);
+    font-size: 18px;
+    padding: 0 6px;
+    flex-shrink: 0;
+    align-self: center;
+  }
+  .pipe-step.highlight { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--card)); }
+  .pipe-step.highlight .label { color: var(--accent); }
+
+  /* ── MAIN ARCH GRID ── */
+  .arch-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 16px;
+  }
+  .arch-col { display: flex; flex-direction: column; gap: 16px; }
+
+  /* ── MODULE CARD ── */
+  .mod-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    transition: border-color 0.2s, transform 0.2s;
+  }
+  .mod-card:hover {
+    border-color: var(--border-bright);
+    transform: translateY(-1px);
+  }
+  .mod-header {
+    padding: 16px 18px 12px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+  }
+  .mod-icon {
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--accent) 15%, transparent);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    flex-shrink: 0;
+    border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  }
+  .mod-title {
+    font-family: 'Syne', sans-serif;
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--white);
+    line-height: 1.3;
+  }
+  .mod-file {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9px;
+    color: var(--muted);
+    margin-top: 2px;
+  }
+  .mod-body { padding: 14px 18px; }
+  .mod-desc {
+    font-size: 12px;
+    color: var(--text);
+    line-height: 1.6;
+    margin-bottom: 12px;
+  }
+
+  /* Pills */
+  .pills { display: flex; flex-wrap: wrap; gap: 6px; }
+  .pill {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9.5px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    color: var(--accent);
+    border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
+    letter-spacing: 0.3px;
+  }
+
+  /* Code-style list */
+  .code-list {
+    list-style: none;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10.5px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .code-list li {
+    color: var(--text);
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .code-list li::before {
+    content: '›';
+    color: var(--accent);
+    flex-shrink: 0;
+    margin-top: 1px;
+  }
+  .code-list li span { color: var(--muted); }
+
+  /* ── LANGGRAPH DIAGRAM ── */
+  .graph-diagram {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 40px;
+    overflow-x: auto;
+  }
+  .graph-flow {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0;
+    min-width: 700px;
+  }
+  .gnode {
+    background: var(--card);
+    border: 1px solid var(--border-bright);
+    border-radius: 8px;
+    padding: 12px 24px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--white);
+    text-align: center;
+    min-width: 200px;
+    position: relative;
+  }
+  .gnode.entry { border-color: var(--green); color: var(--green); background: color-mix(in srgb, var(--green) 8%, var(--card)); }
+  .gnode.decision { border-color: var(--yellow); color: var(--yellow); background: color-mix(in srgb, var(--yellow) 8%, var(--card)); border-radius: 50px; }
+  .gnode.action { border-color: var(--cyan); color: var(--cyan); background: color-mix(in srgb, var(--cyan) 8%, var(--card)); }
+  .gnode.tool { border-color: var(--orange); color: var(--orange); background: color-mix(in srgb, var(--orange) 8%, var(--card)); }
+  .gnode.end { border-color: var(--red); color: var(--red); background: color-mix(in srgb, var(--red) 8%, var(--card)); }
+  .gnode .sub { font-size: 9px; color: var(--muted); margin-top: 2px; font-weight: 300; }
+
+  .garrow {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+  }
+  .garrow .line {
+    width: 1px;
+    height: 24px;
+    background: var(--border-bright);
+  }
+  .garrow .tip { color: var(--muted); font-size: 12px; }
+  .garrow .label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9px;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+
+  .branch-row {
+    display: flex;
+    gap: 40px;
+    justify-content: center;
+    align-items: flex-start;
+    position: relative;
+  }
+  .branch-row::before {
+    content: '';
+    position: absolute;
+    top: -1px;
+    left: calc(50% - 230px);
+    right: calc(50% - 230px);
+    height: 1px;
+    background: var(--border-bright);
+  }
+
+  .branch-col {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0;
+  }
+  .branch-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9px;
+    color: var(--muted);
+    margin-bottom: 8px;
+    white-space: nowrap;
+  }
+
+  /* ── REACT CYCLE ── */
+  .react-cycle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 20px;
+    padding: 30px;
+    flex-wrap: wrap;
+  }
+  .react-node {
+    background: var(--card);
+    border-radius: 50%;
+    width: 100px;
+    height: 100px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    border: 2px solid;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    font-weight: 500;
+    text-align: center;
+    line-height: 1.4;
+  }
+  .react-node .emoji { font-size: 20px; margin-bottom: 4px; }
+  .cycle-arrow { font-size: 20px; color: var(--muted); }
+
+  /* ── DB TABLES ── */
+  .db-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+  }
+  .db-table {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  .db-table-header {
+    background: color-mix(in srgb, var(--accent) 10%, var(--card));
+    border-bottom: 1px solid color-mix(in srgb, var(--accent) 20%, var(--border));
+    padding: 10px 14px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--accent);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .db-field {
+    padding: 7px 14px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid var(--border);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+  }
+  .db-field:last-child { border-bottom: none; }
+  .db-field .fname { color: var(--text); }
+  .db-field .ftype { color: var(--muted); font-size: 9px; }
+  .db-field .fpk { color: var(--yellow); font-size: 9px; background: rgba(255,204,0,0.1); padding: 1px 5px; border-radius: 3px; }
+  .db-field .ffk { color: var(--cyan); font-size: 9px; background: rgba(0,212,255,0.1); padding: 1px 5px; border-radius: 3px; }
+
+  /* relation arrows */
+  .db-relations {
+    margin-top: 20px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .relation {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 14px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--text);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .relation .arrow { color: var(--muted); }
+  .relation .type { color: var(--orange); font-size: 9px; }
+
+  /* ── SEARCH PIPELINE ── */
+  .search-stages {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 8px;
+    align-items: start;
+  }
+  .search-stage {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  .ss-head {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .ss-body { padding: 12px 14px; font-size: 11px; color: var(--text); line-height: 1.5; }
+  .ss-body .detail { color: var(--muted); font-size: 10px; font-family: 'JetBrains Mono', monospace; margin-top: 6px; }
+
+  /* ── ENV TABLE ── */
+  .env-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+  }
+  .env-table th {
+    text-align: left;
+    padding: 10px 16px;
+    background: var(--surface);
+    color: var(--muted);
+    font-size: 10px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    border-bottom: 1px solid var(--border);
+  }
+  .env-table td {
+    padding: 9px 16px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  .env-table tr:last-child td { border-bottom: none; }
+  .env-table tr:hover td { background: var(--surface); }
+  .env-key { color: var(--cyan); }
+  .env-val { color: var(--orange); }
+  .env-desc { color: var(--muted); font-size: 10px; }
+  .env-req { color: var(--red); font-size: 9px; background: rgba(255,59,59,0.1); padding: 1px 6px; border-radius: 3px; }
+  .env-opt { color: var(--muted); font-size: 9px; background: rgba(90,90,122,0.2); padding: 1px 6px; border-radius: 3px; }
+  .env-table-wrap {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+
+  /* ── TECH STACK ── */
+  .tech-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+  }
+  .tech-group {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  .tech-group-head {
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--accent);
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+  .tech-items { padding: 12px 16px; display: flex; flex-direction: column; gap: 8px; }
+  .tech-item { display: flex; justify-content: space-between; align-items: center; }
+  .tech-item .tname { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text); }
+  .tech-item .tver { font-family: 'JetBrains Mono', monospace; font-size: 9px; color: var(--muted); background: var(--surface); padding: 2px 6px; border-radius: 3px; }
+
+  /* ── DIVIDER ── */
+  .divider {
+    height: 1px;
+    background: linear-gradient(to right, transparent, var(--border), transparent);
+    margin: 8px 0;
+  }
+
+  /* ── TOC ── */
+  .toc {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 24px;
+  }
+  .toc a {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--muted);
+    text-decoration: none;
+    padding: 5px 12px;
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    transition: all 0.2s;
+  }
+  .toc a:hover { color: var(--white); border-color: var(--border-bright); background: var(--surface); }
+
+  /* ── FOOTER ── */
+  footer {
+    margin-top: 80px;
+    padding: 30px 60px;
+    border-top: 1px solid var(--border);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--muted);
+    display: flex;
+    justify-content: space-between;
+  }
+
+  /* ── ACCENTS per-section ── */
+  .acc-red  { --accent: var(--red); }
+  .acc-cyan  { --accent: var(--cyan); }
+  .acc-green { --accent: var(--green); }
+  .acc-orange { --accent: var(--orange); }
+  .acc-purple { --accent: var(--purple); }
+  .acc-blue  { --accent: var(--blue); }
+  .acc-yellow { --accent: var(--yellow); }
+  .acc-pink  { --accent: var(--pink); }
+
+  /* ── ANIMATIONS ── */
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(16px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .section { animation: fadeUp 0.5s ease backwards; }
+  .section:nth-child(1) { animation-delay: 0.05s; }
+  .section:nth-child(2) { animation-delay: 0.10s; }
+  .section:nth-child(3) { animation-delay: 0.15s; }
+  .section:nth-child(4) { animation-delay: 0.20s; }
+  .section:nth-child(5) { animation-delay: 0.25s; }
+  .section:nth-child(6) { animation-delay: 0.30s; }
+  .section:nth-child(7) { animation-delay: 0.35s; }
+
+  /* wide-card */
+  .wide-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px;
+  }
+
+  /* note box */
+  .note {
+    background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+    border: 1px solid color-mix(in srgb, var(--accent) 25%, var(--border));
+    border-radius: 8px;
+    padding: 12px 16px;
+    font-size: 12px;
+    color: var(--text);
+    display: flex;
+    gap: 10px;
+    margin-top: 16px;
+  }
+  .note-icon { flex-shrink: 0; }
+</style>
+</head>
+<body>
+
+<!-- ══════════════════════════════ HEADER ══════════════════════════════ -->
+<header>
+  <div class="header-tag">Technical Architecture · v1.0 · 2026</div>
+  <h1>YT-Navigator<br><span>System Design</span></h1>
+  <p class="header-sub">Complete technical breakdown of all modules, data flows, agent graphs, and infrastructure decisions in the YouTube Content Explorer platform.</p>
+  <nav class="toc">
+    <a href="#overview">Overview</a>
+    <a href="#ingestion">Ingestion Pipeline</a>
+    <a href="#modules">Technical Modules</a>
+    <a href="#agent">Agent System</a>
+    <a href="#search">Search Pipeline</a>
+    <a href="#database">Data Models</a>
+    <a href="#tech">Tech Stack</a>
+    <a href="#env">Configuration</a>
+  </nav>
+</header>
+
+<main>
+
+  <!-- ══════════════════════════════ OVERVIEW ══════════════════════════════ -->
+  <section class="section" id="overview">
+    <div class="section-label">01 — Overview</div>
+    <div class="section-title">System at a Glance</div>
+    <div class="overview-grid">
+      <div class="stat-card acc-red" style="--accent:var(--red)">
+        <div class="stat-val">3</div>
+        <div class="stat-key">Core User Features</div>
+      </div>
+      <div class="stat-card acc-cyan" style="--accent:var(--cyan)">
+        <div class="stat-val">5</div>
+        <div class="stat-key">Service Layers</div>
+      </div>
+      <div class="stat-card acc-green" style="--accent:var(--green)">
+        <div class="stat-val">4</div>
+        <div class="stat-key">LangGraph Nodes</div>
+      </div>
+      <div class="stat-card acc-orange" style="--accent:var(--orange)">
+        <div class="stat-val">2</div>
+        <div class="stat-key">AI Tools (Chatbot)</div>
+      </div>
+    </div>
+
+    <!-- High-Level Architecture -->
+    <div class="flow-container acc-cyan">
+      <div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--muted);letter-spacing:2px;text-transform:uppercase;margin-bottom:24px;">High-Level Architecture</div>
+      <div style="display:flex;gap:16px;flex-direction:column">
+        <!-- Row 1: User Tier -->
+        <div style="display:flex;align-items:center;gap:8px">
+          <div style="font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--muted);width:90px;flex-shrink:0;">USER TIER</div>
+          <div style="flex:1;background:color-mix(in srgb,var(--purple) 10%,var(--card));border:1px solid color-mix(in srgb,var(--purple) 30%,var(--border));border-radius:8px;padding:12px 20px;display:flex;gap:24px;flex-wrap:wrap">
+            <div style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--purple);">🌐 Browser (HTML/CSS/JS)</div>
+            <div style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--muted);">→ Login / Register → Home Dashboard → Query Page → Chatbot Page</div>
+          </div>
+        </div>
+        <div style="padding-left:106px;color:var(--muted)">↕</div>
+        <!-- Row 2: Web Tier -->
+        <div style="display:flex;align-items:center;gap:8px">
+          <div style="font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--muted);width:90px;flex-shrink:0;">WEB TIER</div>
+          <div style="flex:1;background:color-mix(in srgb,var(--cyan) 10%,var(--card));border:1px solid color-mix(in srgb,var(--cyan) 30%,var(--border));border-radius:8px;padding:12px 20px">
+            <div style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--cyan);margin-bottom:8px;">⚙️ Django Application Server (ASGI async)</div>
+            <div style="display:flex;gap:16px;flex-wrap:wrap">
+              <span style="font-size:11px;color:var(--muted)">RequestLoggingMiddleware</span>
+              <span style="font-size:11px;color:var(--muted)">AuthMiddleware</span>
+              <span style="font-size:11px;color:var(--muted)">CSRF / Session</span>
+              <span style="font-size:11px;color:var(--muted)">Views (async)</span>
+            </div>
+          </div>
+        </div>
+        <div style="padding-left:106px;color:var(--muted)">↕</div>
+        <!-- Row 3: Service Tier -->
+        <div style="display:flex;align-items:center;gap:8px">
+          <div style="font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--muted);width:90px;flex-shrink:0;">SERVICE TIER</div>
+          <div style="flex:1;background:color-mix(in srgb,var(--green) 10%,var(--card));border:1px solid color-mix(in srgb,var(--green) 30%,var(--border));border-radius:8px;padding:12px 20px">
+            <div style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--green);margin-bottom:8px;">🧠 Business Logic Services</div>
+            <div style="display:flex;gap:12px;flex-wrap:wrap">
+              <span style="font-size:11px;padding:3px 10px;background:rgba(0,230,118,0.1);border-radius:5px;color:var(--green)">YoutubeScraper</span>
+              <span style="font-size:11px;padding:3px 10px;background:rgba(0,230,118,0.1);border-radius:5px;color:var(--green)">VectorDatabaseService</span>
+              <span style="font-size:11px;padding:3px 10px;background:rgba(0,230,118,0.1);border-radius:5px;color:var(--green)">AgentGraph</span>
+              <span style="font-size:11px;padding:3px 10px;background:rgba(0,230,118,0.1);border-radius:5px;color:var(--green)">ChunksReRanker</span>
+              <span style="font-size:11px;padding:3px 10px;background:rgba(0,230,118,0.1);border-radius:5px;color:var(--green)">LangsmithEvaluator</span>
+            </div>
+          </div>
+        </div>
+        <div style="padding-left:106px;color:var(--muted)">↕</div>
+        <!-- Row 4: Data Tier -->
+        <div style="display:flex;align-items:flex-start;gap:8px">
+          <div style="font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--muted);width:90px;flex-shrink:0;padding-top:14px">DATA TIER</div>
+          <div style="flex:1;display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+            <div style="background:color-mix(in srgb,var(--orange) 10%,var(--card));border:1px solid color-mix(in srgb,var(--orange) 30%,var(--border));border-radius:8px;padding:12px;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--orange)">🐘 PostgreSQL<br><span style="color:var(--muted);font-size:9px">app_user, app_channel, app_video, app_videochunk</span></div>
+            <div style="background:color-mix(in srgb,var(--blue) 10%,var(--card));border:1px solid color-mix(in srgb,var(--blue) 30%,var(--border));border-radius:8px;padding:12px;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--blue)">🔢 PGVector<br><span style="color:var(--muted);font-size:9px">langchain_pg_embedding, langchain_pg_collection</span></div>
+            <div style="background:color-mix(in srgb,var(--pink) 10%,var(--card));border:1px solid color-mix(in srgb,var(--pink) 30%,var(--border));border-radius:8px;padding:12px;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--pink)">🔖 LangGraph Checkpoints<br><span style="color:var(--muted);font-size:9px">checkpoints, checkpoint_blobs, checkpoint_writes</span></div>
+          </div>
+        </div>
+        <div style="padding-left:106px;color:var(--muted)">↕</div>
+        <!-- Row 5: External -->
+        <div style="display:flex;align-items:center;gap:8px">
+          <div style="font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--muted);width:90px;flex-shrink:0">EXTERNAL</div>
+          <div style="flex:1;background:var(--surface);border:1px dashed var(--border);border-radius:8px;padding:12px 20px;display:flex;gap:20px;flex-wrap:wrap">
+            <span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--muted)">📺 YouTube (yt-dlp, scrapetube)</span>
+            <span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--muted)">⚡ Groq API (LLM)</span>
+            <span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--muted)">🤗 HuggingFace (Embeddings + Reranker)</span>
+            <span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--muted)">🔭 LangSmith (Observability)</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════ INGESTION PIPELINE ══════════════════════════════ -->
+  <section class="section" id="ingestion">
+    <div class="section-label">02 — Data Flow</div>
+    <div class="section-title">Video Ingestion Pipeline</div>
+
+    <div class="flow-container acc-green">
+      <div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--muted);letter-spacing:2px;text-transform:uppercase;margin-bottom:28px;">End-to-End Processing Flow</div>
+      <div class="pipeline acc-green">
+        <div class="pipe-step highlight">
+          <span class="icon">🔗</span>
+          <span class="label">YouTube URL</span>
+          <span class="sub">User Input (POST)</span>
+        </div>
+        <div class="pipe-arrow">→</div>
+        <div class="pipe-step" style="--accent:var(--cyan)">
+          <span class="icon">✅</span>
+          <span class="label">URL Validation</span>
+          <span class="sub">validate_video_link()</span>
+        </div>
+        <div class="pipe-arrow">→</div>
+        <div class="pipe-step" style="--accent:var(--orange)">
+          <span class="icon">📡</span>
+          <span class="label">Video Scraping</span>
+          <span class="sub">VideoScraper</span>
+        </div>
+        <div class="pipe-arrow">→</div>
+        <div class="pipe-step" style="--accent:var(--yellow)">
+          <span class="icon">📝</span>
+          <span class="label">Transcript Fetch</span>
+          <span class="sub">yt-dlp + XML parse</span>
+        </div>
+        <div class="pipe-arrow">→</div>
+        <div class="pipe-step" style="--accent:var(--purple)">
+          <span class="icon">✂️</span>
+          <span class="label">Chunking</span>
+          <span class="sub">max 40s segments</span>
+        </div>
+        <div class="pipe-arrow">→</div>
+        <div class="pipe-step" style="--accent:var(--blue)">
+          <span class="icon">🔢</span>
+          <span class="label">Embeddings</span>
+          <span class="sub">BAAI/bge-small-en</span>
+        </div>
+        <div class="pipe-arrow">→</div>
+        <div class="pipe-step" style="--accent:var(--green)">
+          <span class="icon">💾</span>
+          <span class="label">PGVector Store</span>
+          <span class="sub">langchain_pg_embedding</span>
+        </div>
+        <div class="pipe-arrow">→</div>
+        <div class="pipe-step" style="--accent:var(--red)">
+          <span class="icon">✅</span>
+          <span class="label">Done</span>
+          <span class="sub">Redirect + Flash msg</span>
+        </div>
+      </div>
+      <div class="divider"></div>
+      <!-- Parallel SQL write -->
+      <div style="margin-top:18px;display:flex;align-items:center;gap:16px">
+        <div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--muted);white-space:nowrap">PARALLEL SQL WRITE</div>
+        <div class="pipe-arrow" style="color:var(--muted)">→</div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <div style="background:var(--card);border:1px solid var(--border);border-radius:6px;padding:7px 14px;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text)">Video.objects.create(id, title, thumbnail, published_at)</div>
+          <div style="background:var(--card);border:1px solid var(--border);border-radius:6px;padding:7px 14px;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text)">VideoChunk.objects.bulk_create(chunks + timestamps)</div>
+        </div>
+      </div>
+      <div class="note acc-yellow" style="--accent:var(--yellow)">
+        <span class="note-icon">⚠️</span>
+        <span>Transcript uses <strong>yt-dlp</strong> with 3-attempt exponential backoff (2s→4s→8s). Tries manual subtitles first, falls back to auto-generated captions. Supports both XML and JSON subtitle formats. Dev mode uses <strong>FAISS</strong> in-memory instead of PGVector.</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════ TECHNICAL MODULES ══════════════════════════════ -->
+  <section class="section" id="modules">
+    <div class="section-label">03 — Modules</div>
+    <div class="section-title">All Technical Modules</div>
+
+    <div class="arch-grid">
+
+      <!-- COLUMN 1: Scraping + Models -->
+      <div class="arch-col">
+
+        <div class="mod-card acc-orange">
+          <div class="mod-header">
+            <div class="mod-icon">📡</div>
+            <div>
+              <div class="mod-title">YoutubeScraper (Orchestrator)</div>
+              <div class="mod-file">services/scraping/youtube_scraper.py</div>
+            </div>
+          </div>
+          <div class="mod-body">
+            <div class="mod-desc">Main entry point for all scraping. Coordinates channel, video, and transcript scrapers. Manages parallel workers via ThreadPoolExecutor. Singleton via lru_cache.</div>
+            <ul class="code-list">
+              <li>scrape_single_video(video_link) <span>→ (metadata, chunks)</span></li>
+              <li>get_channel_data(link, username) <span>→ Channel</span></li>
+              <li>validate_channel_link(link) <span>→ str username</span></li>
+            </ul>
+            <div style="margin-top:12px" class="pills">
+              <span class="pill">scrapetube</span>
+              <span class="pill">asyncio</span>
+              <span class="pill">ThreadPoolExecutor</span>
+              <span class="pill">workers_num=4</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="mod-card acc-orange">
+          <div class="mod-header">
+            <div class="mod-icon">📝</div>
+            <div>
+              <div class="mod-title">TranscriptScraper</div>
+              <div class="mod-file">services/scraping/transcript.py</div>
+            </div>
+          </div>
+          <div class="mod-body">
+            <div class="mod-desc">Extracts and chunks video transcripts using yt-dlp. Parses both XML subtitle format (older YouTube) and JSON subtitle format (new YouTube). Chunks transcript into segments by max duration.</div>
+            <ul class="code-list">
+              <li>get_video_transcript(metadata) <span>→ List[Dict]</span></li>
+              <li>chunk_transcript(segments) <span>→ chunked list</span></li>
+            </ul>
+            <div style="margin-top:12px" class="pills">
+              <span class="pill">yt-dlp</span>
+              <span class="pill">xml.etree</span>
+              <span class="pill">max_segment=40s</span>
+              <span class="pill">retry x3</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="mod-card acc-orange">
+          <div class="mod-header">
+            <div class="mod-icon">🎬</div>
+            <div>
+              <div class="mod-title">VideoScraper</div>
+              <div class="mod-file">services/scraping/video.py</div>
+            </div>
+          </div>
+          <div class="mod-body">
+            <div class="mod-desc">Extracts video metadata from YouTube. Fetches title, thumbnail URL, publish date, and video ID. Runs with configurable concurrency.</div>
+            <ul class="code-list">
+              <li>get_video_metadata(video_id) <span>→ dict</span></li>
+            </ul>
+            <div style="margin-top:12px" class="pills">
+              <span class="pill">max_concurrent_tasks</span>
+              <span class="pill">yt-dlp</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="mod-card acc-orange">
+          <div class="mod-header">
+            <div class="mod-icon">📺</div>
+            <div>
+              <div class="mod-title">ChannelScraper</div>
+              <div class="mod-file">services/scraping/channel.py</div>
+            </div>
+          </div>
+          <div class="mod-body">
+            <div class="mod-desc">Scrapes channel-level metadata. Fetches channel ID, name, profile image, description, and username. Used when user links a full channel (not just single video).</div>
+            <div style="margin-top:12px" class="pills">
+              <span class="pill">scrapetube</span>
+              <span class="pill">request_timeout=10s</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Models -->
+        <div class="mod-card acc-yellow">
+          <div class="mod-header">
+            <div class="mod-icon">🗃️</div>
+            <div>
+              <div class="mod-title">Django Models (ORM)</div>
+              <div class="mod-file">models/ · migrations/</div>
+            </div>
+          </div>
+          <div class="mod-body">
+            <ul class="code-list">
+              <li><span style="color:var(--yellow)">User</span> <span>→ AbstractUser + channel FK</span></li>
+              <li><span style="color:var(--yellow)">Channel</span> <span>→ id, name, username, desc</span></li>
+              <li><span style="color:var(--yellow)">Video</span> <span>→ id, title, thumbnail, published_at</span></li>
+              <li><span style="color:var(--yellow)">VideoChunk</span> <span>→ text, start, end, FK→Video</span></li>
+            </ul>
+            <div style="margin-top:12px" class="pills">
+              <span class="pill">Django ORM</span>
+              <span class="pill">migrations</span>
+              <span class="pill">CASCADE delete</span>
+            </div>
+          </div>
+        </div>
+
+      </div><!-- end col 1 -->
+
+      <!-- COLUMN 2: Vector DB + Reranker -->
+      <div class="arch-col">
+
+        <div class="mod-card acc-blue">
+          <div class="mod-header">
+            <div class="mod-icon">🔢</div>
+            <div>
+              <div class="mod-title">VectorDatabaseService (Singleton)</div>
+              <div class="mod-file">services/vector_database/base.py</div>
+            </div>
+          </div>
+          <div class="mod-body">
+            <div class="mod-desc">Core vector store manager. Singleton pattern ensures one instance. Automatically selects PGVector (PostgreSQL) or FAISS (SQLite dev mode). Manages async SQLAlchemy connection pools.</div>
+            <ul class="code-list">
+              <li>add_chunks(chunks, channel_id) <span>→ None</span></li>
+              <li>delete_video(video_id) <span>→ int</span></li>
+              <li>get_vstore(channel_id) <span>→ PGVector|FAISS</span></li>
+              <li>embeddings <span>→ HuggingFaceEmbeddings (cached)</span></li>
+            </ul>
+            <div style="margin-top:12px" class="pills">
+              <span class="pill">PGVector</span>
+              <span class="pill">FAISS (dev)</span>
+              <span class="pill">SQLAlchemy async</span>
+              <span class="pill">pool_size=20</span>
+              <span class="pill">cuda/cpu auto</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="mod-card acc-blue">
+          <div class="mod-header">
+            <div class="mod-icon">🔍</div>
+            <div>
+              <div class="mod-title">VectorDatabaseTools</div>
+              <div class="mod-file">services/vector_database/tools/vector_tool.py</div>
+            </div>
+          </div>
+          <div class="mod-body">
+            <div class="mod-desc">Exposes vector search as a LangChain StructuredTool for the chatbot agent. Runs hybrid search (vector similarity + BM25 keyword), deduplicates, then reranks. Scores normalized 0–100 via MinMaxScaler.</div>
+            <ul class="code-list">
+              <li>similarity_videos_search(query, channel_id) <span>→ QueryVectorStoreResponse</span></li>
+              <li>_standardize_scores(chunks) <span>→ 0-100 scale</span></li>
+              <li>_get_video_data(video_ids) <span>→ dict map</span></li>
+            </ul>
+            <div style="margin-top:12px" class="pills">
+              <span class="pill">k=10 similarity</span>
+              <span class="pill">BM25 hybrid</span>
+              <span class="pill">MinMaxScaler</span>
+              <span class="pill">dedup</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="mod-card acc-blue">
+          <div class="mod-header">
+            <div class="mod-icon">📚</div>
+            <div>
+              <div class="mod-title">VectorRetriever</div>
+              <div class="mod-file">services/vector_database/retriever.py</div>
+            </div>
+          </div>
+          <div class="mod-body">
+            <div class="mod-desc">Handles BM25 keyword search as a complement to vector similarity. Loads all VideoChunk rows into BM25Retriever on demand. Also checks PGVector for existing IDs to prevent duplicates.</div>
+            <ul class="code-list">
+              <li>keyword_search(query, channel_id) <span>→ List[Document]</span></li>
+              <li>get_bm25_retriever(channel_id) <span>→ BM25Retriever</span></li>
+              <li>get_non_existing_ids(ids) <span>→ List[str]</span></li>
+            </ul>
+            <div style="margin-top:12px" class="pills">
+              <span class="pill">BM25Retriever</span>
+              <span class="pill">asyncpg</span>
+              <span class="pill">select_related</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="mod-card acc-blue">
+          <div class="mod-header">
+            <div class="mod-icon">🗺️</div>
+            <div>
+              <div class="mod-title">SQLTools</div>
+              <div class="mod-file">services/vector_database/tools/sql_tool.py</div>
+            </div>
+          </div>
+          <div class="mod-body">
+            <div class="mod-desc">Exposes SELECT-only SQL execution as a LangChain tool for the chatbot. Agent can query app_video and app_videochunk tables for structured lookups (counts, titles, dates). Supports both asyncpg and psycopg2 (sync). Auto-generates schema description for LLM context.</div>
+            <ul class="code-list">
+              <li>execute_query(sql) <span>→ str rows (SELECT only)</span></li>
+              <li>get_tables_schema() <span>→ schema for LLM</span></li>
+            </ul>
+            <div style="margin-top:12px" class="pills">
+              <span class="pill">SELECT-only guard</span>
+              <span class="pill">asyncpg</span>
+              <span class="pill">psycopg2 sync</span>
+              <span class="pill">max 20 rows</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Reranker -->
+        <div class="mod-card acc-purple">
+          <div class="mod-header">
+            <div class="mod-icon">🏆</div>
+            <div>
+              <div class="mod-title">ChunksReRanker</div>
+              <div class="mod-file">services/chunks_reranker/reranker.py</div>
+            </div>
+          </div>
+          <div class="mod-body">
+            <div class="mod-desc">Two-stage retrieval precision layer. Cross-encoder scores each (query, chunk) pair. Parallel processing via ThreadPoolExecutor. Batch size from config. Sorted descending by score.</div>
+            <ul class="code-list">
+              <li>rerank(query, docs) <span>→ List[Dict scored]</span></li>
+              <li>chunk_docs(docs, batch_size) <span>→ batches</span></li>
+              <li>process_chunk(query, chunk) <span>→ ranked docs</span></li>
+            </ul>
+            <div style="margin-top:12px" class="pills">
+              <span class="pill">cross-encoder/ms-marco-MiniLM-L-6</span>
+              <span class="pill">ThreadPoolExecutor</span>
+              <span class="pill">seq_len=512</span>
+            </div>
+          </div>
+        </div>
+
+      </div><!-- end col 2 -->
+
+      <!-- COLUMN 3: Agent + Views + Infra -->
+      <div class="arch-col">
+
+        <div class="mod-card acc-red">
+          <div class="mod-header">
+            <div class="mod-icon">🧠</div>
+            <div>
+              <div class="mod-title">AgentGraph (LangGraph)</div>
+              <div class="mod-file">services/agent/main_graph.py</div>
+            </div>
+          </div>
+          <div class="mod-body">
+            <div class="mod-desc">Stateful LangGraph orchestrator. Routes every message through a 3-way decision: tool-calls path, non-tool path, or static rejection. Checkpoints to PostgreSQL for persistent per-user conversation history. Singleton per event loop.</div>
+            <ul class="code-list">
+              <li>route_message(state) <span>→ AgentState</span></li>
+              <li>router_condition(state) <span>→ Literal[3 routes]</span></li>
+              <li>non_tool_calls_reply(state) <span>→ AgentState</span></li>
+              <li>process_message(msg, channel, user) <span>→ str JSON</span></li>
+              <li>build_graph() <span>→ CompiledStateGraph</span></li>
+            </ul>
+            <div style="margin-top:12px" class="pills">
+              <span class="pill">LangGraph StateGraph</span>
+              <span class="pill">AsyncPostgresSaver</span>
+              <span class="pill">Groq LLM</span>
+              <span class="pill">recursion_limit=15</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="mod-card acc-red">
+          <div class="mod-header">
+            <div class="mod-icon">🔄</div>
+            <div>
+              <div class="mod-title">ReAct Agent (Sub-graph)</div>
+              <div class="mod-file">services/agent/react_graph.py</div>
+            </div>
+          </div>
+          <div class="mod-body">
+            <div class="mod-desc">Inner agent loop for tool-using replies. Cycles between model call and tool execution until no more tool calls remain. Max 3 tool iteration rounds to prevent infinite loops. Tools: vector search + SQL.</div>
+            <ul class="code-list">
+              <li>call_model(state, config) <span>→ AgentState</span></li>
+              <li>tool_node(state) <span>→ ToolMessages</span></li>
+              <li>should_continue(state) <span>→ end | continue</span></li>
+            </ul>
+            <div style="margin-top:12px" class="pills">
+              <span class="pill">MAX_TOOL_ITERATIONS=3</span>
+              <span class="pill">temp=0.0</span>
+              <span class="pill">trim_messages max=6000</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="mod-card acc-green">
+          <div class="mod-header">
+            <div class="mod-icon">👁️</div>
+            <div>
+              <div class="mod-title">Views Layer</div>
+              <div class="mod-file">views/ (all async)</div>
+            </div>
+          </div>
+          <div class="mod-body">
+            <ul class="code-list">
+              <li><span style="color:var(--green)">scan.py</span> <span>process_single_video, delete_video</span></li>
+              <li><span style="color:var(--green)">chatbot.py</span> <span>send_message, clear_chat_history</span></li>
+              <li><span style="color:var(--green)">query.py</span> <span>query, query_page</span></li>
+              <li><span style="color:var(--green)">home.py</span> <span>home_view (video list)</span></li>
+              <li><span style="color:var(--green)">profile.py</span> <span>profile_view</span></li>
+              <li><span style="color:var(--green)">authentication.py</span> <span>register_view</span></li>
+            </ul>
+            <div style="margin-top:12px" class="pills">
+              <span class="pill">@login_required</span>
+              <span class="pill">@require_http_methods</span>
+              <span class="pill">async def</span>
+              <span class="pill">sync_to_async</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="mod-card acc-pink">
+          <div class="mod-header">
+            <div class="mod-icon">🔭</div>
+            <div>
+              <div class="mod-title">LangSmith Evaluation</div>
+              <div class="mod-file">services/evaluation/langsmith_evaluation_service.py</div>
+            </div>
+          </div>
+          <div class="mod-body">
+            <div class="mod-desc">Background observability layer. After every agent response, logs input/output to LangSmith dataset in a daemon thread. Creates dataset if not exists. Optional — skipped gracefully if API key absent.</div>
+            <ul class="code-list">
+              <li>add_example_sync(result) <span>→ void (background)</span></li>
+              <li>create_dataset() <span>→ UUID</span></li>
+            </ul>
+            <div style="margin-top:12px" class="pills">
+              <span class="pill">LangSmith Client</span>
+              <span class="pill">daemon thread</span>
+              <span class="pill">optional</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="mod-card acc-cyan">
+          <div class="mod-header">
+            <div class="mod-icon">📜</div>
+            <div>
+              <div class="mod-title">Logging Infrastructure</div>
+              <div class="mod-file">yt_navigator/utils/logging.py · middlewares/</div>
+            </div>
+          </div>
+          <div class="mod-body">
+            <div class="mod-desc">Structlog-powered logging throughout the app. Each request gets a UUID trace ID. Outputs both console (pretty) and JSON file. Request middleware captures method, path, IP, user-agent, duration for every HTTP call.</div>
+            <div style="margin-top:12px" class="pills">
+              <span class="pill">structlog</span>
+              <span class="pill">JSON file</span>
+              <span class="pill">Console renderer</span>
+              <span class="pill">request UUID</span>
+              <span class="pill">duration tracking</span>
+            </div>
+          </div>
+        </div>
+
+      </div><!-- end col 3 -->
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════ AGENT GRAPH ══════════════════════════════ -->
+  <section class="section" id="agent">
+    <div class="section-label">04 — Agent System</div>
+    <div class="section-title">LangGraph Agent Architecture</div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+
+      <!-- Main Graph -->
+      <div class="graph-diagram acc-red">
+        <div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--muted);letter-spacing:2px;text-transform:uppercase;margin-bottom:24px;">Main Router Graph (AgentGraph)</div>
+        <div class="graph-flow">
+          <div class="gnode entry">START<div class="sub">process_message() called</div></div>
+          <div class="garrow"><div class="line"></div><div class="tip">↓</div></div>
+          <div class="gnode decision">route_message<div class="sub">Groq LLM decides: Yes / No / Not relevant</div></div>
+          <div class="garrow"><div class="line"></div></div>
+          <!-- Three branches -->
+          <div class="branch-row">
+            <div class="branch-col">
+              <div class="branch-label" style="color:var(--green)">answer == "Yes"</div>
+              <div class="gnode action" style="--accent:var(--green);border-color:var(--green);color:var(--green)">tool_calls_reply<div class="sub">→ ReAct sub-graph</div></div>
+            </div>
+            <div class="branch-col">
+              <div class="branch-label" style="color:var(--cyan)">answer == "No"</div>
+              <div class="gnode action">non_tool_calls_reply<div class="sub">Direct LLM reply</div></div>
+            </div>
+            <div class="branch-col">
+              <div class="branch-label" style="color:var(--red)">answer == "Not relevant"</div>
+              <div class="gnode tool" style="--accent:var(--red)">static_not_relevant_reply<div class="sub">Static rejection msg</div></div>
+            </div>
+          </div>
+          <div class="garrow"><div class="line"></div><div class="tip">↓</div></div>
+          <div class="gnode end">END<div class="sub">extract_response() → JSON → HTTP</div></div>
+        </div>
+        <div class="note acc-yellow" style="--accent:var(--yellow);margin-top:20px">
+          <span class="note-icon">💾</span>
+          <span>Conversation state persisted per <strong>user.id</strong> as thread_id in PostgreSQL via <strong>AsyncPostgresSaver</strong>. Returns full history on chatbot page load.</span>
+        </div>
+      </div>
+
+      <!-- ReAct Sub-graph -->
+      <div class="graph-diagram acc-cyan">
+        <div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--muted);letter-spacing:2px;text-transform:uppercase;margin-bottom:24px;">ReAct Sub-graph (react_graph.py)</div>
+        <div class="react-cycle">
+          <div class="react-node" style="border-color:var(--cyan);color:var(--cyan)">
+            <span class="emoji">🤖</span>
+            agent<br><span style="color:var(--muted)">call_model()</span>
+          </div>
+          <div style="display:flex;flex-direction:column;align-items:center;gap:4px">
+            <div style="font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--muted)">tool_calls?</div>
+            <div class="cycle-arrow">⇄</div>
+            <div style="font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--muted)">continue</div>
+          </div>
+          <div class="react-node" style="border-color:var(--orange);color:var(--orange)">
+            <span class="emoji">🔧</span>
+            tools<br><span style="color:var(--muted)">tool_node()</span>
+          </div>
+        </div>
+        <div style="margin-top:16px">
+          <div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--muted);margin-bottom:12px">AVAILABLE TOOLS</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+            <div style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:12px">
+              <div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--blue);font-weight:700;margin-bottom:6px">🔢 similarity_search</div>
+              <div style="font-size:11px;color:var(--muted)">Semantic search over transcript embeddings. Returns chunks with video metadata and timestamps.</div>
+            </div>
+            <div style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:12px">
+              <div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--orange);font-weight:700;margin-bottom:6px">📊 execute_query</div>
+              <div style="font-size:11px;color:var(--muted)">SELECT-only SQL on app_video and app_videochunk. Useful for counts, title searches, date filtering.</div>
+            </div>
+          </div>
+        </div>
+        <div style="margin-top:16px">
+          <div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--muted);margin-bottom:12px">PROMPT DESIGN</div>
+          <div style="display:flex;flex-direction:column;gap:6px">
+            <div style="background:var(--card);border:1px solid var(--border);border-radius:6px;padding:8px 12px;font-size:11px;color:var(--text)"><span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--cyan)">ROUTE_QUERY_SYSTEM_PROMPT</span> — Decides Yes/No/Not-relevant. Instructs LLM to output JSON only. Injects channel info + tool descriptions.</div>
+            <div style="background:var(--card);border:1px solid var(--border);border-radius:6px;padding:8px 12px;font-size:11px;color:var(--text)"><span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--green)">SYSTEM_PROMPT_TEMPLATE</span> — YTNavigator persona. Forces detailed chunk-based answers. Strict output schema (placeholder + videos[]).</div>
+            <div style="background:var(--card);border:1px solid var(--border);border-radius:6px;padding:8px 12px;font-size:11px;color:var(--text)"><span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--orange)">NON_TOOL_CALLS_SYSTEM_PROMPT</span> — Friendly chat reply without tool calls. Still outputs structured JSON.</div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Schemas -->
+    <div style="margin-top:16px;display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
+      <div class="wide-card acc-red">
+        <div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--red);font-weight:700;margin-bottom:10px">AgentState (LangGraph State Schema)</div>
+        <ul class="code-list">
+          <li>messages <span>: Annotated[Sequence[BaseMessage], add_messages]</span></li>
+          <li>channel <span>: Optional[Channel | dict]</span></li>
+          <li>user <span>: Union[SimpleLazyObject, object]</span></li>
+          <li>router_results <span>: Optional[AgentRouterOutput]</span></li>
+        </ul>
+      </div>
+      <div class="wide-card acc-cyan">
+        <div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--cyan);font-weight:700;margin-bottom:10px">AgentOutput (Pydantic — final response)</div>
+        <ul class="code-list">
+          <li>placeholder <span>: str (Markdown→HTML)</span></li>
+          <li>videos <span>: List[AgentOutputVideos] max 5</span></li>
+          <li>  ↳ title, id, thumbnail_url</li>
+          <li>  ↳ description, timestamps[]</li>
+          <li>     ↳ start, end, description</li>
+        </ul>
+      </div>
+      <div class="wide-card acc-green">
+        <div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--green);font-weight:700;margin-bottom:10px">QueryVectorStoreResponse (Search result schema)</div>
+        <ul class="code-list">
+          <li>chunks <span>: List[ChunkSchema]</span></li>
+          <li>  ↳ text, start, end, videoId, score</li>
+          <li>  ↳ start_in_seconds (for YT link)</li>
+          <li>videos <span>: List[VideoSchema]</span></li>
+          <li>  ↳ videoId, title, thumbnail, avg_score</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════ SEARCH PIPELINE ══════════════════════════════ -->
+  <section class="section" id="search">
+    <div class="section-label">05 — Search System</div>
+    <div class="section-title">Hybrid Search + Reranking Pipeline</div>
+
+    <div class="search-stages acc-blue">
+      <div class="search-stage">
+        <div class="ss-head" style="color:var(--cyan);border-bottom-color:color-mix(in srgb,var(--cyan) 20%,var(--border))">
+          <span>1️⃣</span> Query Input
+        </div>
+        <div class="ss-body">
+          User submits natural language query (POST /query-request/)
+          <div class="detail">query_msg: str</div>
+          <div class="detail">No channel filtering in current code (channel_id=None → all videos)</div>
+        </div>
+      </div>
+      <div class="search-stage">
+        <div class="ss-head" style="color:var(--blue);border-bottom-color:color-mix(in srgb,var(--blue) 20%,var(--border))">
+          <span>2️⃣</span> Vector Search
+        </div>
+        <div class="ss-body">
+          Query embedded via BGE model. Cosine similarity against langchain_pg_embedding.
+          <div class="detail">k=10 nearest chunks</div>
+          <div class="detail">asimilarity_search() async</div>
+          <div class="detail">FAISS in dev mode</div>
+        </div>
+      </div>
+      <div class="search-stage">
+        <div class="ss-head" style="color:var(--green);border-bottom-color:color-mix(in srgb,var(--green) 20%,var(--border))">
+          <span>3️⃣</span> BM25 Search
+        </div>
+        <div class="ss-body">
+          Keyword-based BM25 retrieval from VideoChunk table. Complements semantic search.
+          <div class="detail">BM25Retriever.from_documents()</div>
+          <div class="detail">Built from all VideoChunks</div>
+          <div class="detail">Merged with vector results</div>
+        </div>
+      </div>
+      <div class="search-stage">
+        <div class="ss-head" style="color:var(--purple);border-bottom-color:color-mix(in srgb,var(--purple) 20%,var(--border))">
+          <span>4️⃣</span> Reranking
+        </div>
+        <div class="ss-body">
+          Cross-encoder scores every (query, chunk) pair in parallel batches.
+          <div class="detail">ms-marco-MiniLM-L-6-v2</div>
+          <div class="detail">ThreadPoolExecutor parallel</div>
+          <div class="detail">Sorted desc by score</div>
+          <div class="detail">Scores → MinMaxScaler 0–100</div>
+        </div>
+      </div>
+      <div class="search-stage">
+        <div class="ss-head" style="color:var(--orange);border-bottom-color:color-mix(in srgb,var(--orange) 20%,var(--border))">
+          <span>5️⃣</span> Response Build
+        </div>
+        <div class="ss-body">
+          Enrich chunks with video metadata. Deduplicate. Paginate (6/page).
+          <div class="detail">start→seconds for YT URL</div>
+          <div class="detail">QueryVectorStoreResponse</div>
+          <div class="detail">Thumbnails + timestamps</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="note acc-cyan" style="--accent:var(--cyan);margin-top:16px">
+      <span class="note-icon">💡</span>
+      <span><strong>Hybrid Retrieval:</strong> Combining vector similarity (semantic understanding) with BM25 (exact keyword matching) reduces both false positives from pure vector search and misses from pure keyword search. The cross-encoder reranker then applies a more expensive but more accurate scoring function to the merged candidate set.</span>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════ DATABASE ══════════════════════════════ -->
+  <section class="section" id="database">
+    <div class="section-label">06 — Data Layer</div>
+    <div class="section-title">Database Schema &amp; Relationships</div>
+
+    <div class="db-grid">
+      <!-- app_user -->
+      <div class="db-table acc-yellow" style="--accent:var(--yellow)">
+        <div class="db-table-header">📋 app_user</div>
+        <div class="db-field"><span class="fname">id</span><span class="fpk">PK</span></div>
+        <div class="db-field"><span class="fname">username</span><span class="ftype">CharField</span></div>
+        <div class="db-field"><span class="fname">email</span><span class="ftype">EmailField</span></div>
+        <div class="db-field"><span class="fname">password</span><span class="ftype">CharField</span></div>
+        <div class="db-field"><span class="fname">channel_id</span><span class="ffk">FK→Channel</span></div>
+        <div class="db-field"><span class="fname">is_active</span><span class="ftype">Bool</span></div>
+      </div>
+      <!-- app_channel -->
+      <div class="db-table acc-orange" style="--accent:var(--orange)">
+        <div class="db-table-header">📺 app_channel</div>
+        <div class="db-field"><span class="fname">id</span><span class="fpk">PK (YT ID)</span></div>
+        <div class="db-field"><span class="fname">name</span><span class="ftype">CharField</span></div>
+        <div class="db-field"><span class="fname">username</span><span class="ftype">CharField</span></div>
+        <div class="db-field"><span class="fname">description</span><span class="ftype">TextField</span></div>
+        <div class="db-field"><span class="fname">profile_image_url</span><span class="ftype">URLField</span></div>
+        <div class="db-field"><span class="fname">url</span><span class="ftype">URLField</span></div>
+        <div class="db-field"><span class="fname">created_at</span><span class="ftype">DateTime</span></div>
+        <div class="db-field"><span class="fname">updated_at</span><span class="ftype">DateTime</span></div>
+      </div>
+      <!-- app_video -->
+      <div class="db-table acc-green" style="--accent:var(--green)">
+        <div class="db-table-header">🎬 app_video</div>
+        <div class="db-field"><span class="fname">id</span><span class="fpk">PK (YT video ID)</span></div>
+        <div class="db-field"><span class="fname">title</span><span class="ftype">CharField</span></div>
+        <div class="db-field"><span class="fname">thumbnail</span><span class="ftype">URLField</span></div>
+        <div class="db-field"><span class="fname">published_at</span><span class="ftype">DateTime</span></div>
+        <div class="db-field"><span class="fname">channel_id</span><span class="ffk">FK→Channel (null)</span></div>
+      </div>
+      <!-- app_videochunk -->
+      <div class="db-table acc-blue" style="--accent:var(--blue)">
+        <div class="db-table-header">✂️ app_videochunk</div>
+        <div class="db-field"><span class="fname">id</span><span class="fpk">PK (AutoField)</span></div>
+        <div class="db-field"><span class="fname">video_id</span><span class="ffk">FK→Video CASCADE</span></div>
+        <div class="db-field"><span class="fname">start</span><span class="ftype">TimeField</span></div>
+        <div class="db-field"><span class="fname">end</span><span class="ftype">TimeField</span></div>
+        <div class="db-field"><span class="fname">text</span><span class="ftype">TextField</span></div>
+      </div>
+    </div>
+
+    <!-- Relationships -->
+    <div class="db-relations">
+      <div class="relation"><span style="color:var(--yellow)">User</span><span class="arrow">──0..1──►</span><span style="color:var(--orange)">Channel</span><span class="type">ForeignKey nullable</span></div>
+      <div class="relation"><span style="color:var(--orange)">Channel</span><span class="arrow">──1..N──►</span><span style="color:var(--green)">Video</span><span class="type">ForeignKey CASCADE</span></div>
+      <div class="relation"><span style="color:var(--green)">Video</span><span class="arrow">──1..N──►</span><span style="color:var(--blue)">VideoChunk</span><span class="type">ForeignKey CASCADE</span></div>
+      <div class="relation"><span style="color:var(--purple)">PGVector</span><span class="arrow">── cmetadata → video_id ──►</span><span style="color:var(--green)">Video</span><span class="type">soft reference (JSONB)</span></div>
+    </div>
+
+    <!-- Vector store tables -->
+    <div style="margin-top:20px;display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div class="wide-card acc-blue">
+        <div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--blue);font-weight:700;margin-bottom:10px">🔢 langchain_pg_embedding (PGVector)</div>
+        <ul class="code-list">
+          <li>id <span>: UUID PK</span></li>
+          <li>collection_id <span>: FK → langchain_pg_collection</span></li>
+          <li>embedding <span>: vector(768) — BGE dimension</span></li>
+          <li>document <span>: text (chunk text)</span></li>
+          <li>cmetadata <span>: JSONB (video_id, start, end, channel_id)</span></li>
+        </ul>
+      </div>
+      <div class="wide-card acc-pink">
+        <div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--pink);font-weight:700;margin-bottom:10px">🔖 LangGraph Checkpoint Tables</div>
+        <ul class="code-list">
+          <li>checkpoints <span>: thread_id, checkpoint_ns, checkpoint, metadata</span></li>
+          <li>checkpoint_blobs <span>: large state blobs</span></li>
+          <li>checkpoint_writes <span>: incremental writes per step</span></li>
+          <li><span>thread_id = str(user.id) → per-user history</span></li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════ TECH STACK ══════════════════════════════ -->
+  <section class="section" id="tech">
+    <div class="section-label">07 — Tech Stack</div>
+    <div class="section-title">All Libraries &amp; Frameworks</div>
+
+    <div class="tech-grid">
+      <div class="tech-group acc-cyan">
+        <div class="tech-group-head">🌐 Web Framework</div>
+        <div class="tech-items">
+          <div class="tech-item"><span class="tname">Django</span><span class="tver">5.1 + ASGI</span></div>
+          <div class="tech-item"><span class="tname">asgiref</span><span class="tver">sync_to_async</span></div>
+          <div class="tech-item"><span class="tname">structlog</span><span class="tver">JSON logging</span></div>
+          <div class="tech-item"><span class="tname">python-dotenv</span><span class="tver">.env config</span></div>
+          <div class="tech-item"><span class="tname">markdown2</span><span class="tver">response rendering</span></div>
+        </div>
+      </div>
+      <div class="tech-group acc-orange">
+        <div class="tech-group-head">📡 Scraping</div>
+        <div class="tech-items">
+          <div class="tech-item"><span class="tname">yt-dlp</span><span class="tver">transcript fetch</span></div>
+          <div class="tech-item"><span class="tname">scrapetube</span><span class="tver">channel listing</span></div>
+          <div class="tech-item"><span class="tname">requests</span><span class="tver">subtitle download</span></div>
+          <div class="tech-item"><span class="tname">xml.etree</span><span class="tver">subtitle parse</span></div>
+        </div>
+      </div>
+      <div class="tech-group acc-blue">
+        <div class="tech-group-head">🔢 Vector / ML</div>
+        <div class="tech-items">
+          <div class="tech-item"><span class="tname">langchain-postgres</span><span class="tver">PGVector</span></div>
+          <div class="tech-item"><span class="tname">langchain-community</span><span class="tver">FAISS, BM25</span></div>
+          <div class="tech-item"><span class="tname">langchain-huggingface</span><span class="tver">HF Embeddings</span></div>
+          <div class="tech-item"><span class="tname">sentence-transformers</span><span class="tver">cross-encoder</span></div>
+          <div class="tech-item"><span class="tname">torch</span><span class="tver">cuda/cpu device</span></div>
+          <div class="tech-item"><span class="tname">numpy / sklearn</span><span class="tver">score scaling</span></div>
+        </div>
+      </div>
+      <div class="tech-group acc-red">
+        <div class="tech-group-head">🧠 AI / LLM</div>
+        <div class="tech-items">
+          <div class="tech-item"><span class="tname">langchain-groq</span><span class="tver">ChatGroq client</span></div>
+          <div class="tech-item"><span class="tname">langgraph</span><span class="tver">StateGraph</span></div>
+          <div class="tech-item"><span class="tname">langchain</span><span class="tver">tools, parsers</span></div>
+          <div class="tech-item"><span class="tname">langsmith</span><span class="tver">evaluation</span></div>
+          <div class="tech-item"><span class="tname">pydantic</span><span class="tver">v2 schemas</span></div>
+        </div>
+      </div>
+      <div class="tech-group acc-green">
+        <div class="tech-group-head">🗄️ Database</div>
+        <div class="tech-items">
+          <div class="tech-item"><span class="tname">PostgreSQL</span><span class="tver">primary DB</span></div>
+          <div class="tech-item"><span class="tname">pgvector</span><span class="tver">vector extension</span></div>
+          <div class="tech-item"><span class="tname">psycopg2-binary</span><span class="tver">sync driver</span></div>
+          <div class="tech-item"><span class="tname">asyncpg</span><span class="tver">async driver</span></div>
+          <div class="tech-item"><span class="tname">psycopg-pool</span><span class="tver">LangGraph pool</span></div>
+          <div class="tech-item"><span class="tname">SQLAlchemy</span><span class="tver">async engine</span></div>
+          <div class="tech-item"><span class="tname">SQLite</span><span class="tver">dev fallback</span></div>
+        </div>
+      </div>
+      <div class="tech-group acc-purple">
+        <div class="tech-group-head">🤖 Models Used</div>
+        <div class="tech-items">
+          <div class="tech-item"><span class="tname">BAAI/bge-small-en-v1.5</span><span class="tver">embeddings</span></div>
+          <div class="tech-item"><span class="tname">ms-marco-MiniLM-L-6-v2</span><span class="tver">reranker</span></div>
+          <div class="tech-item"><span class="tname">llama-3.1-8b-instant</span><span class="tver">router + chat</span></div>
+          <div class="tech-item"><span class="tname">llama-3.1-8b-instant</span><span class="tver">ReAct agent</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════ ENV CONFIG ══════════════════════════════ -->
+  <section class="section" id="env">
+    <div class="section-label">08 — Configuration</div>
+    <div class="section-title">Environment Variables</div>
+    <div class="env-table-wrap">
+      <table class="env-table">
+        <thead>
+          <tr>
+            <th>Variable</th>
+            <th>Example Value</th>
+            <th>Description</th>
+            <th>Required?</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td class="env-key">DJANGO_SECRET_KEY</td><td class="env-val">django-insecure-xxx</td><td class="env-desc">Django cryptographic key for sessions & CSRF</td><td><span class="env-req">REQUIRED</span></td></tr>
+          <tr><td class="env-key">DEBUG</td><td class="env-val">True</td><td class="env-desc">Set False in production</td><td><span class="env-req">REQUIRED</span></td></tr>
+          <tr><td class="env-key">GROQ_API_KEY</td><td class="env-val">gsk_xxx</td><td class="env-desc">Groq API key — powers all LLM calls (routing + ReAct agent)</td><td><span class="env-req">REQUIRED</span></td></tr>
+          <tr><td colspan="4" style="padding:0"><div class="divider"></div></td></tr>
+          <tr><td class="env-key">POSTGRES_HOST</td><td class="env-val">localhost</td><td class="env-desc">If unset, app uses SQLite + FAISS automatically</td><td><span class="env-opt">OPTIONAL</span></td></tr>
+          <tr><td class="env-key">POSTGRES_PORT</td><td class="env-val">5432</td><td class="env-desc">PostgreSQL port</td><td><span class="env-opt">OPTIONAL</span></td></tr>
+          <tr><td class="env-key">POSTGRES_DB</td><td class="env-val">yt_navigator</td><td class="env-desc">Database name</td><td><span class="env-opt">OPTIONAL</span></td></tr>
+          <tr><td class="env-key">POSTGRES_USER</td><td class="env-val">postgres</td><td class="env-desc">Database user</td><td><span class="env-opt">OPTIONAL</span></td></tr>
+          <tr><td class="env-key">POSTGRES_PASSWORD</td><td class="env-val">secret</td><td class="env-desc">Database password</td><td><span class="env-opt">OPTIONAL</span></td></tr>
+          <tr><td colspan="4" style="padding:0"><div class="divider"></div></td></tr>
+          <tr><td class="env-key">EMBEDDING_MODEL</td><td class="env-val">BAAI/bge-small-en-v1.5</td><td class="env-desc">HuggingFace embedding model for chunks</td><td><span class="env-opt">has default</span></td></tr>
+          <tr><td class="env-key">EMBEDDING_BATCH_SIZE</td><td class="env-val">32</td><td class="env-desc">Embedding generation batch size</td><td><span class="env-opt">has default</span></td></tr>
+          <tr><td class="env-key">RERANKER_MODEL_NAME</td><td class="env-val">cross-encoder/ms-marco-MiniLM-L-6-v2</td><td class="env-desc">Cross-encoder reranking model</td><td><span class="env-opt">has default</span></td></tr>
+          <tr><td class="env-key">RERANKER_MAX_SEQUENCE_LENGTH</td><td class="env-val">512</td><td class="env-desc">Max token length for reranker</td><td><span class="env-opt">has default</span></td></tr>
+          <tr><td class="env-key">INSTANT_LLM</td><td class="env-val">llama-3.1-8b-instant</td><td class="env-desc">Fast LLM for routing decisions</td><td><span class="env-opt">has default</span></td></tr>
+          <tr><td class="env-key">POWERFUL_LLM</td><td class="env-val">llama-3.1-8b-instant</td><td class="env-desc">Main LLM for ReAct agent (set to bigger model for better quality)</td><td><span class="env-opt">has default</span></td></tr>
+          <tr><td class="env-key">SCRAPER_WORKERS_NUM</td><td class="env-val">4</td><td class="env-desc">Parallel transcript worker threads</td><td><span class="env-opt">has default</span></td></tr>
+          <tr><td colspan="4" style="padding:0"><div class="divider"></div></td></tr>
+          <tr><td class="env-key">LANGSMITH_API_KEY</td><td class="env-val">ls__xxx</td><td class="env-desc">LangSmith tracing — skipped if absent</td><td><span class="env-opt">OPTIONAL</span></td></tr>
+          <tr><td class="env-key">LANGCHAIN_TRACING_V2</td><td class="env-val">true</td><td class="env-desc">Enable LangChain tracing</td><td><span class="env-opt">OPTIONAL</span></td></tr>
+          <tr><td class="env-key">LANGCHAIN_PROJECT</td><td class="env-val">yt-navigator</td><td class="env-desc">LangSmith project name</td><td><span class="env-opt">OPTIONAL</span></td></tr>
+          <tr><td class="env-key">LOG_LEVEL</td><td class="env-val">INFO</td><td class="env-desc">Root log level</td><td><span class="env-opt">has default</span></td></tr>
+          <tr><td class="env-key">HF_HOME</td><td class="env-val">/path/to/cache</td><td class="env-desc">HuggingFace model cache directory</td><td><span class="env-opt">OPTIONAL</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <span>YT-Navigator · System Design Document · Generated 2026</span>
+  <span>Django 5.1 · LangGraph · Groq · PGVector · BAAI/bge-small-en-v1.5</span>
+</footer>
+
+</body>
+</html>

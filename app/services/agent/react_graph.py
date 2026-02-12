@@ -2,10 +2,14 @@
 
 import copy
 import os
+import traceback
 from typing import Literal
 
+import structlog
+from asgiref.sync import sync_to_async
 from django.conf import settings
 from langchain_core.messages import (
+    AIMessage,
     SystemMessage,
     ToolMessage,
     trim_messages,
@@ -28,6 +32,11 @@ from app.services.vector_database.tools import (
     SQLTools,
     VectorDatabaseTools,
 )
+
+logger = structlog.get_logger(__name__)
+
+# Maximum number of tool call rounds before forcing a final answer
+MAX_TOOL_ITERATIONS = 3
 
 tools = [
     VectorDatabaseTools.tool(),
@@ -56,7 +65,20 @@ async def tool_node(state: AgentState) -> AgentState:
     """
     outputs = []
     for tool_call in state.messages[-1].tool_calls:
-        tool_result = await tools_by_name[tool_call["name"]].ainvoke(tool_call["args"])
+        try:
+            tool = tools_by_name[tool_call["name"]]
+            # Check if the tool has a coroutine (async) or only a sync func
+            if tool.coroutine is not None:
+                tool_result = await tool.ainvoke(tool_call["args"])
+            else:
+                # Run sync tools in a thread to avoid blocking the event loop
+                tool_result = await sync_to_async(tool.invoke, thread_sensitive=False)(tool_call["args"])
+            # Ensure result is a string
+            if not isinstance(tool_result, str):
+                tool_result = str(tool_result)
+        except Exception as e:
+            logger.error("Tool execution error", tool_name=tool_call["name"], error=str(e), traceback=traceback.format_exc())
+            tool_result = f"Tool error: {str(e)}"
         outputs.append(
             ToolMessage(
                 content=tool_result,
@@ -82,9 +104,18 @@ async def call_model(
     """
     output_parser = PydanticOutputParser(pydantic_object=AgentOutput)
 
+    # Safely get channel description
+    channel_str = "No channel (single video mode)"
+    if state.channel is not None:
+        try:
+            channel_str = await state.channel.pretty_str()
+        except Exception as e:
+            logger.warning("Error getting channel pretty_str", error=str(e))
+            channel_str = str(state.channel)
+
     system_prompt = SystemMessage(
         SYSTEM_PROMPT_TEMPLATE.format(
-            channel=await state.channel.pretty_str() if state.channel else "No channel (single video mode)",
+            channel=channel_str,
             user=state.user,
             format_instructions=output_parser.get_format_instructions(),
         )
@@ -94,14 +125,48 @@ async def call_model(
         copy.deepcopy(state.messages),
         strategy="last",
         token_counter=model,
-        max_tokens=2000,
+        max_tokens=6000,
         start_on="human",
         include_system=False,
         allow_partial=False,
     )
 
     response = await model.ainvoke([system_prompt] + trimmed_messages, config)
+
+    # Ensure response content is valid AgentOutput JSON
+    try:
+        AgentOutput.model_validate_json(response.content)
+    except Exception:
+        logger.warning("LLM response is not valid AgentOutput JSON, wrapping it")
+        # Try to extract JSON from the response (LLM may have added extra text around it)
+        import json
+        import re
+        content = response.content
+        json_match = re.search(r'\{.*\}', content, re.DOTALL)
+        if json_match:
+            try:
+                parsed = json.loads(json_match.group())
+                if "placeholder" in parsed:
+                    wrapped = AgentOutput(**parsed)
+                    response.content = wrapped.model_dump_json()
+                    return {"messages": [response]}
+            except Exception:
+                pass
+        # Fallback: wrap plain text as AgentOutput
+        wrapped = AgentOutput(placeholder=str(content), videos=[])
+        response.content = wrapped.model_dump_json()
+
     return {"messages": [response]}
+
+
+def _count_tool_iterations(state: AgentState) -> int:
+    """Count the number of tool call rounds in the current conversation."""
+    count = 0
+    for msg in state.messages:
+        if isinstance(msg, ToolMessage):
+            count += 1
+    # Each tool call round can have multiple ToolMessages, approximate by counting ToolMessage groups
+    return count
 
 
 def should_continue(state: AgentState) -> Literal["end", "continue"]:
@@ -118,9 +183,11 @@ def should_continue(state: AgentState) -> Literal["end", "continue"]:
     # If there is no function call, then we finish
     if not last_message.tool_calls:
         return "end"
-    # Otherwise if there is, we continue
-    else:
-        return "continue"
+    # Check if we've exceeded the max tool iterations
+    tool_count = _count_tool_iterations(state)
+    if tool_count >= MAX_TOOL_ITERATIONS * 2:  # Each round has ~2 tool messages
+        return "end"
+    return "continue"
 
 
 def build_workflow() -> CompiledStateGraph:

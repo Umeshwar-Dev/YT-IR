@@ -1,6 +1,7 @@
 """Transcript-related functionality for YouTube scraping."""
 
 import time
+import traceback
 from typing import (
     Dict,
     List,
@@ -76,8 +77,10 @@ class TranscriptScraper:
                             subtitle_url = subtitle_info['url']
                         else:
                             logger.warning(
-                                f"No transcript available for https://www.youtube.com/watch?v={video_id}",
+                                f"No transcript available for https://www.youtube.com/watch?v={video_id}. Video might not have captions enabled.",
                                 video_id=video_id,
+                                has_subtitles="subtitles" in subtitles,
+                                has_auto_captions="automatic_captions" in subtitles,
                             )
                             return []
                         

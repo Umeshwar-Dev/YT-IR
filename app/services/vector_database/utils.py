@@ -46,14 +46,27 @@ def get_avg_score(chunks: List[ChunkSchema], video_id: str) -> float:
 
 def minimise_chunks(chunks: List[dict]) -> List[ChunkSchema]:
     """Convert chunks to a minimal representation."""
-    return [
-        ChunkSchema(
-            text=r["text"],
-            start=str(r["start"]),
-            end=str(r["end"]),
-            videoId=r["video_id"],
-            score=r["score"],
-        )
-        for r in chunks
-        if all(key in r for key in ["text", "start", "end", "video_id", "score"])
-    ]
+    result = []
+    for r in chunks:
+        video_id = r.get("video_id") or r.get("videoId")
+        text = r.get("text", "")
+        score = r.get("score", 0)
+        # Support both "start"/"end" and "start_time"/"duration"/"timestamp" formats
+        start = r.get("start") or r.get("timestamp") or str(r.get("start_time", "0"))
+        end = r.get("end")
+        if not end and r.get("start_time") is not None and r.get("duration") is not None:
+            end = str(r["start_time"] + r["duration"])
+        elif not end:
+            end = start
+
+        if video_id and text:
+            result.append(
+                ChunkSchema(
+                    text=text,
+                    start=str(start),
+                    end=str(end),
+                    videoId=video_id,
+                    score=score,
+                )
+            )
+    return result

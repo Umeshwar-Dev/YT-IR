@@ -1,5 +1,6 @@
 """Chatbot views."""
 
+import asyncio
 import traceback
 
 import structlog
@@ -55,17 +56,42 @@ async def send_message(request):
         )
 
     try:
-        # No channel dependency for single video processing
-        user_channel = None
+        # Get user's channel if available
+        try:
+            user_channel = await sync_to_async(
+                lambda: request.user.channel if request.user.channel_id else None,
+                thread_sensitive=True
+            )()
+        except Exception:
+            user_channel = None
 
         # Get graph instance for the current event loop
         graph = await get_graph_instance()
 
-        response = await graph.process_message(
-            message=message,
-            channel=user_channel,
-            user=user,
-        )
+        # Add timeout to prevent indefinite hanging
+        try:
+            response = await asyncio.wait_for(
+                graph.process_message(
+                    message=message,
+                    channel=user_channel,
+                    user=user,
+                ),
+                timeout=300,  # 5 minute timeout for Groq rate limit retries
+            )
+        except asyncio.TimeoutError:
+            logger.error("Agent processing timed out", user_id=user_id, message=message)
+            return JsonResponse(
+                {"error": True, "response": "The request took too long. Please try a simpler question."},
+                status=504,
+            )
+
+        if response is None:
+            logger.warning("No response generated for message", user_id=user_id)
+            from app.schemas import AgentOutput
+            response = AgentOutput(
+                placeholder="I couldn't find relevant information. Please try rephrasing your question.",
+                videos=[],
+            ).model_dump_json()
 
         return JsonResponse(response, safe=False)
 

@@ -1,7 +1,8 @@
 """This module provides a service for managing vector database operations and embeddings.
 
 The VectorDatabaseService class handles vector storage operations, including initialization of embeddings,
-managing database instances, and handling document operations.
+managing database instances, and handling document operations. It supports both PostgreSQL (PGVector)
+and SQLite (with FAISS fallback) for vector storage.
 """
 
 import asyncio
@@ -20,6 +21,7 @@ import torch
 from asgiref.sync import sync_to_async
 from django.conf import settings
 from langchain_community.retrievers import BM25Retriever
+from langchain_community.vectorstores import FAISS
 from langchain_core.documents.base import Document
 from langchain_huggingface.embeddings import HuggingFaceEmbeddings
 from langchain_postgres.vectorstores import PGVector
@@ -45,29 +47,56 @@ class VectorDatabaseService:
     managing database instances, and handling document operations.
     """
 
+    # Singleton instance
+    _instance = None
+
     # Create engine as a class attribute but use it to create separate connections
-    _ENGINE = create_async_engine(
-        DATABASE_URL,
-        pool_size=20,  # Increase connection pool size
-        max_overflow=10,  # Allow additional connections when pool is full
-        pool_pre_ping=True,  # Check connection validity before using
-        pool_recycle=3600,  # Recycle connections after 1 hour
-        echo=False,
-        future=True,  # Use the new future API
-        pool_use_lifo=True,  # Use LIFO to reduce connection churn
-    )
+    # Skip async engine creation for SQLite (not supported)
+    _ENGINE = None
+    if "sqlite" not in DATABASE_URL.lower():
+        _ENGINE = create_async_engine(
+            DATABASE_URL,
+            pool_size=20,  # Increase connection pool size
+            max_overflow=10,  # Allow additional connections when pool is full
+            pool_pre_ping=True,  # Check connection validity before using
+            pool_recycle=3600,  # Recycle connections after 1 hour
+            echo=False,
+            future=True,  # Use the new future API
+            pool_use_lifo=True,  # Use LIFO to reduce connection churn
+        )
+
+    def __new__(cls):
+        """Ensure only one instance exists (singleton pattern)."""
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            cls._instance._initialized = False
+        return cls._instance
 
     def __init__(self):
         """Initialize the VectorDatabaseService.
 
         Sets up the device for model inference and initializes the embeddings model
-        with the configured settings.
+        with the configured settings. Supports both PostgreSQL (PGVector) and SQLite (FAISS).
         """
+        if self._initialized:
+            return
+        self._initialized = True
+
         # Determine the best available device
         self.device = self._get_optimal_device()
 
         self._db_instances: Dict[str, Optional[PGVector]] = {}
         self._bm25_retrievers: Dict[str, Optional[BM25Retriever]] = {}
+        
+        # Check if using SQLite (fallback to FAISS)
+        self.is_sqlite = "sqlite" in DATABASE_URL.lower()
+        self._faiss_stores: Dict[str, Optional[FAISS]] = {}  # For SQLite fallback
+        self._documents_store: Dict[str, List[Document]] = {}  # For storing documents with SQLite
+        
+        if self.is_sqlite:
+            logger.info("Using SQLite database - will use FAISS for vector storage")
+        else:
+            logger.info("Using PostgreSQL database - will use PGVector for vector storage")
 
         logger.info("VectorDatabaseService initialized with connection pool")
 
@@ -111,16 +140,46 @@ class VectorDatabaseService:
             logger.error(f"Error detecting device: {e}. Defaulting to CPU.")
             return "cpu"
 
-    async def get_vstore(self, channel_id: str) -> Optional[PGVector]:
+    async def get_vstore(self, channel_id: str = None):
         """Get or create a vector store instance for a specific channel.
 
         Args:
-            channel_id: The ID of the channel to get the vector store for.
+            channel_id: The ID of the channel to get the vector store for (can be None for single video mode).
 
         Returns:
-            Optional[PGVector]: The vector store instance for the channel,
-                or None if creation fails.
+            Optional[Union[PGVector, FAISS]]: The vector store instance for the channel,
+                or None if creation fails. Returns FAISS for SQLite, PGVector for PostgreSQL.
         """
+        # Use a default channel ID for single video mode
+        if not channel_id:
+            channel_id = "default_channel"
+        
+        # For SQLite, use FAISS
+        if self.is_sqlite:
+            if channel_id not in self._faiss_stores:
+                try:
+                    logger.debug("Creating FAISS vector store for SQLite", channel_id=channel_id)
+                    # Create empty FAISS store if documents don't exist yet
+                    if channel_id not in self._documents_store or not self._documents_store[channel_id]:
+                        # Create a dummy document to initialize FAISS
+                        dummy_doc = Document(page_content="", metadata={"channel_id": channel_id})
+                        self._faiss_stores[channel_id] = FAISS.from_documents(
+                            documents=[dummy_doc],
+                            embedding=self.embeddings,
+                        )
+                        logger.info("Initialized empty FAISS store", channel_id=channel_id)
+                    else:
+                        self._faiss_stores[channel_id] = FAISS.from_documents(
+                            documents=self._documents_store[channel_id],
+                            embedding=self.embeddings,
+                        )
+                except Exception as e:
+                    logger.error("Failed to create FAISS store", error=str(e), traceback=traceback.format_exc())
+                    self._faiss_stores[channel_id] = None
+            
+            return self._faiss_stores[channel_id]
+        
+        # For PostgreSQL, use PGVector
         if channel_id not in self._db_instances:
             try:
                 # Get the current event loop
@@ -215,18 +274,49 @@ class VectorDatabaseService:
             logger.error(f"Error deleting video {video_id}", error=str(e), traceback=traceback.format_exc())
             return 0
 
-    async def add_chunks(self, chunks: List[dict], channel_id: str) -> None:
+    async def add_chunks(self, chunks: List[dict], channel_id: str = None) -> None:
         """Add chunks to the vector database.
 
         Args:
             chunks: List of chunks to add.
-            channel_id: Channel ID for the chunks.
+            channel_id: Channel ID for the chunks (optional, defaults to 'default_channel' for single video mode).
 
         Raises:
             Exception: If there's an error adding chunks.
         """
+        if not channel_id:
+            channel_id = "default_channel"
+        
         try:
-            logger.info("Adding chunks to vector database", chunks_count=len(chunks))
+            logger.info("Adding chunks to vector database", chunks_count=len(chunks), channel_id=channel_id)
+            
+            # For SQLite with FAISS
+            if self.is_sqlite:
+                documents = self.dict_to_langchain_documents(chunks, channel_id=channel_id)
+                
+                if channel_id not in self._documents_store:
+                    self._documents_store[channel_id] = []
+                
+                # Add new documents to store
+                self._documents_store[channel_id].extend(documents)
+                
+                # Recreate FAISS store with all documents
+                if documents:
+                    try:
+                        self._faiss_stores[channel_id] = FAISS.from_documents(
+                            documents=self._documents_store[channel_id],
+                            embedding=self.embeddings,
+                        )
+                        logger.info("Added chunks to FAISS store", chunks_count=len(documents), channel_id=channel_id)
+                    except Exception as e:
+                        logger.error("Error adding chunks to FAISS", error=str(e), traceback=traceback.format_exc())
+                        raise
+
+                # Also save VideoChunk objects to SQLite for BM25 keyword search
+                await self._save_video_chunks_to_db(documents, channel_id)
+                return
+            
+            # For PostgreSQL with PGVector
             vstore = await self.get_vstore(channel_id)
             if not vstore:
                 logger.error("Failed to get vector store", channel_id=channel_id)
@@ -363,6 +453,54 @@ class VectorDatabaseService:
 
         # Format as HH:MM:SS
         return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+    async def _save_video_chunks_to_db(self, documents: List[Document], channel_id: str) -> None:
+        """Save VideoChunk objects to the database for BM25 keyword search.
+
+        Args:
+            documents: List of Langchain Document objects.
+            channel_id: Channel ID for the chunks.
+        """
+        try:
+            # Get existing texts to avoid duplicates
+            existing_texts = await sync_to_async(
+                lambda: set(
+                    VideoChunk.objects.filter(text__in=[c.page_content for c in documents]).values_list("text", flat=True)
+                )
+            )()
+
+            filtered_docs = [c for c in documents if c.page_content not in existing_texts]
+            if not filtered_docs:
+                return
+
+            # Get videos for linking
+            video_ids = list({c.metadata.get("video_id") for c in filtered_docs if c.metadata.get("video_id")})
+            videos = await sync_to_async(
+                lambda: {v.id: v for v in Video.objects.filter(id__in=video_ids)}
+            )()
+
+            video_chunks = []
+            for chunk in filtered_docs:
+                video_id = chunk.metadata.get("video_id")
+                if video_id and video_id in videos:
+                    start_time = chunk.metadata.get("start_time")
+                    duration = chunk.metadata.get("duration")
+                    end_time = start_time + duration if start_time is not None and duration is not None else None
+
+                    video_chunks.append(
+                        VideoChunk(
+                            video=videos[video_id],
+                            start=self._format_time_for_django(start_time) if start_time is not None else None,
+                            end=self._format_time_for_django(end_time) if end_time is not None else None,
+                            text=chunk.page_content,
+                        )
+                    )
+
+            if video_chunks:
+                await sync_to_async(VideoChunk.objects.bulk_create, thread_sensitive=True)(video_chunks)
+                logger.info("Saved VideoChunk objects to DB", count=len(video_chunks))
+        except Exception as e:
+            logger.error("Error saving VideoChunks to DB", error=str(e), traceback=traceback.format_exc())
 
     async def close(self):
         """Close all database connections.

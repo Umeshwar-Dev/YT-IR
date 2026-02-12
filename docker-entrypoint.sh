@@ -58,8 +58,6 @@ print('Tables created successfully!')
 echo "Applying database migrations..."
 python manage.py makemigrations admin app auth contenttypes sessions
 python manage.py migrate
-# Remove Migrations folder
-rm -rf /app/app/migrations
 
 # Start the application
 echo "Starting application..."

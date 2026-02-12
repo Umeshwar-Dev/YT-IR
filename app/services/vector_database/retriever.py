@@ -18,6 +18,7 @@ from langchain_core.documents.base import Document
 from structlog import get_logger
 
 from app.models import VideoChunk
+from yt_navigator.settings import DATABASE_URL
 
 logger = get_logger(__name__)
 
@@ -43,10 +44,16 @@ class VectorRetriever:
             Exception: If there's an error during the retrieval process.
 
         Note:
-            Uses asyncpg for efficient database querying.
+            For SQLite, returns all IDs as non-existing since we use FAISS.
+            For PostgreSQL, uses asyncpg for efficient database querying.
         """
         if not ids:
             return []
+
+        # For SQLite, return all IDs as new (we use in-memory FAISS)
+        if "sqlite" in DATABASE_URL.lower():
+            logger.debug("Using SQLite - returning all IDs as non-existing", count=len(ids))
+            return ids
 
         try:
             async with asyncpg.create_pool(
@@ -74,7 +81,7 @@ class VectorRetriever:
         """Get a BM25Retriever for the given channel.
 
         Args:
-            channel_id: The ID of the channel to create the retriever for.
+            channel_id: The ID of the channel to create the retriever for (can be None for single video mode).
             **kwargs: Additional keyword arguments for retriever configuration.
 
         Returns:
@@ -82,9 +89,15 @@ class VectorRetriever:
         """
         try:
             # Use select_related to prefetch the video relationship to avoid async access issues
-            chunks = await sync_to_async(
-                lambda: list(VideoChunk.objects.filter(video__channel_id=channel_id).select_related("video"))
-            )()
+            if channel_id:
+                chunks = await sync_to_async(
+                    lambda: list(VideoChunk.objects.filter(video__channel_id=channel_id).select_related("video"))
+                )()
+            else:
+                # For single video mode, get ALL chunks (videos with or without channel)
+                chunks = await sync_to_async(
+                    lambda: list(VideoChunk.objects.all().select_related("video"))
+                )()
 
             # Process all chunks in a sync context to avoid async DB access
             def prepare_documents():

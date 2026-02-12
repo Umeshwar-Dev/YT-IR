@@ -217,12 +217,12 @@
                     </section>
                 {% else %}
                     <section class="col-span-1 bg-[#1E1E1E] rounded-2xl border border-gray-800 flex items-center justify-center">
-                        <div class="bg-yellow-900/20 border-l-4 border-yellow-400 p-5 rounded-lg shadow-md flex items-center space-x-4">
+                        <div class="bg-blue-900/20 border-l-4 border-blue-400 p-5 rounded-lg shadow-md flex items-center space-x-4">
                             <div class="flex-shrink-0">
-                                <i class="fas fa-exclamation-triangle text-yellow-400 text-2xl"></i>
+                                <i class="fas fa-info-circle text-blue-400 text-2xl"></i>
                             </div>
                             <div>
-                                <p class="text-sm text-yellow-100">No channel information available. Select a channel to begin.</p>
+                                <p class="text-sm text-blue-100">You can ask questions about any processed videos. To get channel-specific insights, connect a channel from the home page.</p>
                             </div>
                         </div>
                     </section>
@@ -425,10 +425,14 @@
                 try {
                     const formData = new FormData(chatForm);
                     formData.append('message', message);
+                    const controller = new AbortController();
+                    const timeoutId = setTimeout(() => controller.abort(), 300000); // 5 min
                     const response = await fetch('{% url "app:send_message" %}', {
                         method: 'POST',
-                        body: formData
+                        body: formData,
+                        signal: controller.signal
                     });
+                    clearTimeout(timeoutId);
 
                     let data = await response.json();
 
@@ -457,7 +461,11 @@
 
                     // If error doesn't have response/status (e.g. network error), use defaults
                     if (!errorMessage) {
-                        errorMessage = 'Network error occurred. Please check your connection.';
+                        if (error.name === 'AbortError') {
+                            errorMessage = 'The request timed out. Please try a simpler question.';
+                        } else {
+                            errorMessage = 'Network error occurred. Please check your connection.';
+                        }
                         errorStatus = 0;
                     }
 

@@ -156,14 +156,12 @@ class VectorDatabaseTools:
         # Perform similarity search
         logger.info("Performing similarity search...")
         try:
-            # Use a separate task for similarity search
             if channel_id:
                 similarity_results = await vstore.asimilarity_search(
-                    query, k=20, filter={"channel_id": {"$eq": channel_id}}
+                    query, k=10, filter={"channel_id": {"$eq": channel_id}}
                 )
             else:
-                # For single video mode, search without channel filter
-                similarity_results = await vstore.asimilarity_search(query, k=20)
+                similarity_results = await vstore.asimilarity_search(query, k=10)
             logger.info("Found results from similarity search", count=len(similarity_results))
         except Exception as e:
             logger.error("Error in similarity search", error=str(e), traceback=traceback.format_exc())
@@ -172,7 +170,6 @@ class VectorDatabaseTools:
         # Perform keyword search with fallback
         logger.info("Performing keyword search...")
         try:
-            # Use a separate task for keyword search
             keyword_results = await VectorRetriever.keyword_search(query, channel_id)
             logger.info("Found keyword results", count=len(keyword_results))
         except Exception as e:
@@ -358,10 +355,45 @@ class VectorDatabaseTools:
         return QueryVectorStoreResponse(chunks=standardized_chunks, videos=unique_videos)
 
     @classmethod
+    async def _tool_search(cls, query: str, channel_id: Optional[str] = None, **kwargs) -> str:
+        """Tool wrapper that returns a detailed string result for the agent.
+
+        Args:
+            query: Search query text
+            channel_id: Optional channel ID
+
+        Returns:
+            str: Formatted search results for the agent to use
+        """
+        result = await cls.similarity_videos_search(query, channel_id, **kwargs)
+        if not result.videos:
+            return "No videos found matching your query."
+
+        output_lines = ["## Search Results\n"]
+        for video in result.videos:
+            output_lines.append(
+                f"### Video: '{video.title}'\n"
+                f"  - ID: {video.videoId}\n"
+                f"  - Thumbnail: https://i.ytimg.com/vi/{video.videoId}/hqdefault.jpg\n"
+                f"  - Relevance Score: {video.avg_score:.1f}%"
+            )
+
+        output_lines.append(f"\nTotal: {len(result.videos)} videos, {len(result.chunks)} relevant chunks.\n")
+        output_lines.append("## Relevant Transcript Chunks:\n")
+
+        # Include chunks with full text for detailed answers
+        for chunk in result.chunks[:10]:
+            output_lines.append(
+                f"[Video {chunk.videoId}] (Start: {chunk.start}, End: {chunk.end}):\n{chunk.text}\n"
+            )
+
+        return "\n".join(output_lines)
+
+    @classmethod
     def tool(cls) -> StructuredTool:
         """Create a structured tool for searching videos."""
         return StructuredTool.from_function(
-            coroutine=cls.similarity_videos_search,
+            coroutine=cls._tool_search,
             name="similarity_videos_search",
             description="Search for videos using semantic similarity. Use this when users ask about video content, topics, or want to find relevant videos. Input: query (text to search), channel_id (optional, for single video mode leave null).",
             args_schema=VectorDatabaseToolInput,

@@ -12,13 +12,6 @@ services:
     volumes:
       - ./logs:/app/logs:rw
       - hf-cache:/app/.cache/huggingface:rw
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
   db:
     image: pgvector/pgvector:pg16
     environment:

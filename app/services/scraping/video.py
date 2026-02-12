@@ -131,12 +131,12 @@ class VideoScraper:
         logger.info("Chunk processing completed", processed_videos=len(videos), total_chunks=len(chunks))
         return videos, chunks
 
-    async def save_videos_to_db(self, videos: List[Dict], channel_id: str) -> None:
+    async def save_videos_to_db(self, videos: List[Dict], channel_id: str = None) -> None:
         """Save scraped videos to the database.
 
         Args:
             videos: List of video metadata
-            channel_id: Channel ID to associate videos with
+            channel_id: Channel ID to associate videos with (optional for single video mode)
         """
         try:
             tasks = []
@@ -150,25 +150,27 @@ class VideoScraper:
         except Exception as e:
             logger.error("Failed to save videos batch", channel_id=channel_id, error=e)
 
-    async def _save_single_video(self, video: Dict, channel_id: str) -> None:
+    async def _save_single_video(self, video: Dict, channel_id: str = None) -> None:
         """Save a single video to the database.
 
         Args:
             video: Video metadata
-            channel_id: Channel ID to associate video with
+            channel_id: Channel ID to associate video with (optional for single video mode)
         """
         try:
 
             @sync_to_async
             def _update_or_create_video():
+                defaults = {
+                    "title": video["title"],
+                    "thumbnail": video["thumbnail"],
+                    "published_at": video["published_at"],
+                }
+                if channel_id:
+                    defaults["channel_id"] = channel_id
                 return Video.objects.update_or_create(
                     id=video["videoId"],
-                    defaults={
-                        "title": video["title"],
-                        "thumbnail": video["thumbnail"],
-                        "published_at": video["published_at"],
-                        "channel_id": channel_id,
-                    },
+                    defaults=defaults,
                 )
 
             await _update_or_create_video()

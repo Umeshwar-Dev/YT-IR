@@ -93,10 +93,29 @@ class SQLTools:
             return f"""DB SCHEMA:\n{cls.get_tables_schema()}\nError: You are allowed only to search in the {video_db_name} and {chunk_db_name} tables"""
 
         try:
-            # Extract connection parameters from the URL
             conn_url = settings.PSYCOPG2_DATABASE_URL
 
-            # Connect using asyncpg
+            # Handle SQLite connections
+            if "sqlite" in conn_url.lower():
+                import sqlite3
+                from django.conf import settings as django_settings
+                db_path = django_settings.DATABASES["default"]["NAME"]
+                conn = sqlite3.connect(db_path)
+                conn.row_factory = sqlite3.Row
+                try:
+                    cursor = conn.execute(query)
+                    result = cursor.fetchall()
+                    formated_result = [str(dict(row)) for row in result]
+                    if len(formated_result) > 20:
+                        formated_result.append(
+                            f"The result is too long; truncated to 20 rows from a total of {len(formated_result)} rows."
+                        )
+                        return "\n".join(formated_result[:20])
+                    return "\n".join(formated_result) if formated_result else "No results found."
+                finally:
+                    conn.close()
+
+            # Connect using asyncpg for PostgreSQL
             conn = await asyncpg.connect(conn_url)
             try:
                 # Execute the query
@@ -109,7 +128,7 @@ class SQLTools:
                         f"The result is too long; truncated to 20 rows from a total of {len(formated_result)} rows."
                     )
                     return "\n".join(formated_result[:20])
-                return "\n".join(formated_result)
+                return "\n".join(formated_result) if formated_result else "No results found."
             finally:
                 # Close the connection
                 await conn.close()
@@ -122,32 +141,85 @@ class SQLTools:
             """
 
     @classmethod
+    def execute_query_sync(cls, query: str) -> str:
+        """Execute a SELECT query synchronously and return the results.
+
+        Args:
+            query: The SQL query to execute (must be a SELECT query)
+
+        Returns:
+            Formatted result rows as a string or an error message
+        """
+        if not query.startswith("SELECT"):
+            return "Error: Only SELECT queries are supported"
+
+        video_db_name = Video._meta.db_table
+        chunk_db_name = VideoChunk._meta.db_table
+        if video_db_name not in query and chunk_db_name not in query:
+            return f"""DB SCHEMA:\n{cls.get_tables_schema()}\nError: You are allowed only to search in the {video_db_name} and {chunk_db_name} tables"""
+
+        try:
+            conn_url = settings.PSYCOPG2_DATABASE_URL
+
+            # Handle SQLite connections
+            if "sqlite" in conn_url.lower():
+                import sqlite3
+                from django.conf import settings as django_settings
+                db_path = django_settings.DATABASES["default"]["NAME"]
+                conn = sqlite3.connect(db_path)
+                conn.row_factory = sqlite3.Row
+                try:
+                    cursor = conn.execute(query)
+                    result = cursor.fetchall()
+                    formated_result = [str(dict(row)) for row in result]
+                    if len(formated_result) > 20:
+                        formated_result.append(
+                            f"The result is too long; truncated to 20 rows from a total of {len(formated_result)} rows."
+                        )
+                        return "\n".join(formated_result[:20])
+                    return "\n".join(formated_result) if formated_result else "No results found."
+                finally:
+                    conn.close()
+
+            # Handle PostgreSQL connections synchronously using psycopg2
+            conn = psycopg2.connect(conn_url)
+            try:
+                cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+                cursor.execute(query)
+                result = cursor.fetchall()
+                formated_result = [str(dict(row)) for row in result]
+                if len(formated_result) > 20:
+                    formated_result.append(
+                        f"The result is too long; truncated to 20 rows from a total of {len(formated_result)} rows."
+                    )
+                    return "\n".join(formated_result[:20])
+                return "\n".join(formated_result) if formated_result else "No results found."
+            finally:
+                conn.close()
+        except Exception as e:
+            return f"""
+            DB SCHEMA:
+            {cls.get_tables_schema()}
+        
+            #Error: {e}
+            """
+
+    @classmethod
     def tool(cls) -> StructuredTool:
         """Create a structured tool for executing SQL queries."""
 
-        def run_async_query(query: str) -> List[str] | str:
-            """Run the async query in a synchronous context.
-
-            Args:
-                query: The SQL query to execute
-
-            Returns:
-                The query results or error message
-            """
-            try:
-                return asyncio.run(cls.execute_query(query))
-            except Exception as e:
-                return f"Error executing query: {str(e)}"
-
+        # Determine SQL syntax hint based on database
+        db_syntax = "SQLITE SYNTAX" if "sqlite" in settings.PSYCOPG2_DATABASE_URL.lower() else "POSTGRES SYNTAX"
+        
         return StructuredTool.from_function(
-            func=run_async_query,
+            func=cls.execute_query_sync,
             name="execute_query",
             description="Powerful SQL query execution tool for advanced data retrieval and analysis. Use this to perform complex database operations such as: "
             "- Joining multiple tables to extract comprehensive insights "
             "- Filtering and aggregating video metadata "
             "- Performing complex calculations or statistical analysis "
             "- Retrieving specific subsets of data not easily accessible through other methods "
-            f"\n Table schema:\nPOSTGRES SYNTAX:\n{cls.get_tables_schema()}",
+            f"\n Table schema:\n{db_syntax}:\n{cls.get_tables_schema()}",
             args_schema=SQLQueryToolInput,
             handle_tool_error=True,
         )

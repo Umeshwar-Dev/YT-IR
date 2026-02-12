@@ -171,10 +171,22 @@ async def process_single_video(request):
             chunks_count=len(video_chunks),
         )
 
-        messages.success(
-            request,
-            f"Successfully processed video '{video_metadata['title']}' and extracted {len(video_chunks)} chunks."
-        )
+        if len(video_chunks) == 0:
+            logger.warning(
+                "No chunks extracted from video - likely no captions available",
+                video_id=video_metadata["videoId"],
+                video_title=video_metadata["title"],
+            )
+            messages.warning(
+                request,
+                f"Video '{video_metadata['title']}' was processed but no captions/transcripts were found. Make sure the video has captions enabled."  
+            )
+        else:
+            messages.success(
+                request,
+                f"Successfully processed video '{video_metadata['title']}' and extracted {len(video_chunks)} chunks."
+            )
+
         return redirect("app:home")
 
     except Exception as e:
