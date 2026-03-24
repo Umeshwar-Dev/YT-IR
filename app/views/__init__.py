@@ -6,6 +6,12 @@ from .chatbot import (
     clear_chat_history,
     send_message,
 )
+from .content_generator import (
+    generate_mindmap,
+    generate_notes,
+    mindmap_generator_page,
+    notes_generator_page,
+)
 from .home import home_view
 from .profile import profile_view
 from .query import (
@@ -28,4 +34,8 @@ __all__ = [
     "send_message",
     "chatbot_page",
     "clear_chat_history",
+    "notes_generator_page",
+    "generate_notes",
+    "mindmap_generator_page",
+    "generate_mindmap",
 ]

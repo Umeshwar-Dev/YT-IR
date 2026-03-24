@@ -1,0 +1,511 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Notes Generator{% endblock %}
+
+{% block extra_head %}
+<style>
+    .notes-container {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 20px;
+        min-height: 100vh;
+    }
+
+    .notes-content {
+        background: #1a1a1a;
+        border-radius: 12px;
+        padding: 30px;
+        margin-top: 20px;
+        max-height: 80vh;
+        overflow-y: auto;
+    }
+
+    .notes-content::-webkit-scrollbar {
+        width: 8px;
+    }
+
+    .notes-content::-webkit-scrollbar-track {
+        background: #2a2a2a;
+        border-radius: 4px;
+    }
+
+    .notes-content::-webkit-scrollbar-thumb {
+        background: #555;
+        border-radius: 4px;
+    }
+
+    .notes-content::-webkit-scrollbar-thumb:hover {
+        background: #777;
+    }
+
+    .topic-section {
+        background: #2a2a2a;
+        border-radius: 8px;
+        padding: 20px;
+        margin-bottom: 20px;
+        border-left: 4px solid #3b82f6;
+    }
+
+    .topic-title {
+        font-size: 1.4rem;
+        font-weight: 600;
+        color: #3b82f6;
+        margin-bottom: 15px;
+        padding-bottom: 10px;
+        border-bottom: 1px solid #444;
+    }
+
+    .bullet-point {
+        margin: 12px 0;
+        padding-left: 20px;
+        position: relative;
+    }
+
+    .bullet-point::before {
+        content: "•";
+        color: #ff0000;
+        font-size: 1.2rem;
+        position: absolute;
+        left: 0;
+        top: 0;
+    }
+
+    .point-text {
+        color: #e1e1e1;
+        font-size: 1rem;
+        line-height: 1.6;
+        margin-bottom: 5px;
+    }
+
+    .point-details {
+        color: #b3b3b3;
+        font-size: 0.9rem;
+        margin-top: 8px;
+        margin-left: 20px;
+        font-style: italic;
+        line-height: 1.5;
+        background: #333;
+        padding: 8px 12px;
+        border-radius: 6px;
+        border-left: 3px solid #666;
+    }
+
+    .timestamp {
+        color: #ff0000;
+        font-size: 0.85rem;
+        background: rgba(255, 0, 0, 0.15);
+        padding: 2px 8px;
+        border-radius: 4px;
+        margin-left: auto;
+        font-weight: 600;
+        font-family: monospace;
+        border: 1px solid rgba(255, 0, 0, 0.3);
+        flex-shrink: 0;
+    }
+
+    .point-text {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 15px;
+    }
+
+    .point-content {
+        flex: 1;
+    }
+
+    .concepts-section {
+        background: #2a2a2a;
+        border-radius: 8px;
+        padding: 25px;
+        margin-top: 25px;
+    }
+
+    .concept-item {
+        margin-bottom: 20px;
+        padding: 20px;
+        background: #333333;
+        border-radius: 8px;
+        border-left: 4px solid #10b981;
+        transition: transform 0.2s ease;
+    }
+
+    .concept-item:hover {
+        transform: translateX(5px);
+    }
+
+    .concept-term {
+        font-weight: 600;
+        color: #10b981;
+        margin-bottom: 8px;
+        font-size: 1.1rem;
+    }
+
+    .concept-definition {
+        color: #e1e1e1;
+        line-height: 1.5;
+        font-size: 0.95rem;
+    }
+
+    .summary-section {
+        background: linear-gradient(135deg, #2a2a2a, #1e1e1e);
+        border-radius: 8px;
+        padding: 30px;
+        margin-top: 25px;
+        border: 1px solid #333333;
+    }
+
+    .summary-section p {
+        color: #e1e1e1;
+        line-height: 1.7;
+        font-size: 1.05rem;
+        text-align: justify;
+    }
+
+    .action-items {
+        margin-top: 25px;
+    }
+
+    .action-item {
+        background: linear-gradient(135deg, #ff0000, #cc0000);
+        color: white;
+        padding: 15px 25px;
+        border-radius: 8px;
+        margin-bottom: 12px;
+        font-weight: 500;
+        font-size: 1rem;
+        display: flex;
+        align-items: center;
+        transition: transform 0.2s ease;
+    }
+
+    .action-item::before {
+        content: "✓";
+        margin-right: 10px;
+        font-weight: bold;
+    }
+
+    .action-item:hover {
+        transform: translateX(5px);
+    }
+
+    .loading {
+        text-align: center;
+        padding: 60px;
+        background: #2a2a2a;
+        border-radius: 8px;
+        margin: 20px 0;
+    }
+
+    .error {
+        background: #ef4444;
+        color: white;
+        padding: 20px;
+        border-radius: 8px;
+        margin: 20px 0;
+        font-weight: 500;
+    }
+
+    .video-info {
+        background: #2a2a2a;
+        border-radius: 8px;
+        padding: 25px;
+        margin-bottom: 25px;
+        display: flex;
+        align-items: center;
+        gap: 20px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+    }
+
+    .video-thumbnail {
+        width: 160px;
+        height: 120px;
+        border-radius: 8px;
+        object-fit: cover;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+    }
+
+    .video-details h3 {
+        color: #ffffff;
+        font-size: 1.3rem;
+        margin-bottom: 8px;
+        line-height: 1.3;
+    }
+
+    .video-details p {
+        color: #b3b3b3;
+        margin: 0;
+        font-size: 1rem;
+    }
+
+    /* Section headers */
+    .notes-content h2 {
+        color: #ffffff;
+        font-size: 1.8rem;
+        margin-bottom: 20px;
+        padding-bottom: 10px;
+        border-bottom: 2px solid #444;
+    }
+
+    /* Responsive design */
+    @media (max-width: 768px) {
+        .notes-container {
+            padding: 10px;
+        }
+
+        .notes-content {
+            padding: 20px;
+            max-height: 90vh;
+        }
+
+        .video-info {
+            flex-direction: column;
+            text-align: center;
+        }
+
+        .video-thumbnail {
+            width: 120px;
+            height: 90px;
+        }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="notes-container">
+    <div class="text-center mb-8">
+        <h1 class="text-4xl font-bold text-white mb-4">
+            <i class="fas fa-sticky-note mr-3"></i>AI Notes Generator
+        </h1>
+        <p class="text-gray-400 text-lg">
+            Transform YouTube videos into structured, easy-to-digest notes
+        </p>
+    </div>
+
+    <!-- Input Section -->
+    <div class="max-w-2xl mx-auto mb-8">
+        <div class="bg-gray-800 rounded-lg p-6">
+            <label for="video-url" class="block text-white text-sm font-medium mb-2">
+                YouTube Video URL
+            </label>
+            <div class="flex gap-4">
+                <input type="url" id="video-url" placeholder="https://www.youtube.com/watch?v=..."
+                    class="flex-1 px-4 py-3 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-500">
+                <button onclick="generateNotes()"
+                    class="px-6 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 transition duration-200 font-medium">
+                    <i class="fas fa-magic mr-2"></i>Generate Notes
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Loading State -->
+    <div id="loading" class="loading hidden">
+        <div class="inline-flex items-center">
+            <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-white mr-3"></div>
+            <span class="text-white">Generating notes...</span>
+        </div>
+    </div>
+
+    <!-- Error State -->
+    <div id="error" class="error hidden"></div>
+
+    <!-- Video Info -->
+    <div id="video-info" class="video-info hidden">
+        <img id="video-thumbnail" class="video-thumbnail" src="" alt="Video thumbnail">
+        <div class="video-details">
+            <h3 id="video-title"></h3>
+            <p id="video-duration"></p>
+        </div>
+    </div>
+
+    <!-- Generated Notes -->
+    <div id="notes-result" class="notes-content hidden">
+        <!-- Main Topics -->
+        <div id="main-topics"></div>
+
+        <!-- Key Concepts -->
+        <div id="key-concepts" class="concepts-section hidden">
+            <h2 class="text-2xl font-bold text-white mb-4">
+                <i class="fas fa-lightbulb mr-2"></i>Key Concepts
+            </h2>
+            <div id="concepts-list"></div>
+        </div>
+
+        <!-- Summary -->
+        <div id="summary" class="summary-section hidden">
+            <h2 class="text-2xl font-bold text-white mb-4">
+                <i class="fas fa-file-alt mr-2"></i>Summary
+            </h2>
+            <p id="summary-text" class="text-white leading-relaxed"></p>
+        </div>
+
+        <!-- Action Items -->
+        <div id="action-items" class="action-items hidden">
+            <h2 class="text-2xl font-bold text-white mb-4">
+                <i class="fas fa-tasks mr-2"></i>Action Items
+            </h2>
+            <div id="action-list"></div>
+        </div>
+    </div>
+</div>
+
+<script>
+    async function generateNotes() {
+        const videoUrl = document.getElementById('video-url').value.trim();
+        const loading = document.getElementById('loading');
+        const error = document.getElementById('error');
+        const videoInfo = document.getElementById('video-info');
+        const notesResult = document.getElementById('notes-result');
+
+        if (!videoUrl) {
+            showError('Please enter a YouTube video URL');
+            return;
+        }
+
+        // Show loading
+        loading.classList.remove('hidden');
+        error.classList.add('hidden');
+        videoInfo.classList.add('hidden');
+        notesResult.classList.add('hidden');
+
+        try {
+            const response = await fetch('{% url "app:generate_notes" %}', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': getCookie('csrftoken')
+                },
+                body: JSON.stringify({ video_url: videoUrl })
+            });
+
+            const data = await response.json();
+
+            if (data.success) {
+                displayVideoInfo(data.video_info);
+                displayNotes(data.notes);
+            } else {
+                showError(data.error || 'Failed to generate notes');
+            }
+        } catch (err) {
+            showError('Network error. Please try again.');
+            console.error('Error:', err);
+        } finally {
+            loading.classList.add('hidden');
+        }
+    }
+
+    function displayVideoInfo(videoInfo) {
+        const container = document.getElementById('video-info');
+        document.getElementById('video-thumbnail').src = videoInfo.thumbnail;
+        document.getElementById('video-title').textContent = videoInfo.title;
+        document.getElementById('video-duration').textContent = videoInfo.duration;
+        container.classList.remove('hidden');
+    }
+
+    function displayNotes(notes) {
+        const container = document.getElementById('notes-result');
+
+        // Display main topics
+        const topicsContainer = document.getElementById('main-topics');
+        topicsContainer.innerHTML = '<h2 class="text-2xl font-bold text-white mb-4"><i class="fas fa-list mr-2"></i>Main Topics</h2>';
+
+        notes.main_topics.forEach(topic => {
+            const topicSection = document.createElement('div');
+            topicSection.className = 'topic-section';
+
+            let topicHtml = `
+            <div class="topic-title">${topic.topic}</div>
+        `;
+
+            topic.points.forEach(point => {
+                const timestamp = point.timestamp ? `<span class="timestamp">${point.timestamp}</span>` : '';
+                topicHtml += `
+                <div class="bullet-point">
+                    <div class="point-text">
+                        <div class="point-content">${point.point}</div>
+                        ${timestamp}
+                    </div>
+                    ${point.details ? `<div class="point-details">${point.details}</div>` : ''}
+                </div>
+            `;
+            });
+
+            topicSection.innerHTML = topicHtml;
+            topicsContainer.appendChild(topicSection);
+        });
+
+        // Display key concepts
+        if (notes.key_concepts && notes.key_concepts.length > 0) {
+            const conceptsContainer = document.getElementById('concepts-list');
+            const conceptsSection = document.getElementById('key-concepts');
+            conceptsSection.classList.remove('hidden');
+
+            conceptsContainer.innerHTML = '';
+            notes.key_concepts.forEach(concept => {
+                const conceptItem = document.createElement('div');
+                conceptItem.className = 'concept-item';
+                conceptItem.innerHTML = `
+                <div class="concept-term">${concept.concept}</div>
+                <div class="concept-definition">${concept.definition}</div>
+            `;
+                conceptsContainer.appendChild(conceptItem);
+            });
+        }
+
+        // Display summary
+        if (notes.summary) {
+            const summarySection = document.getElementById('summary');
+            const summaryText = document.getElementById('summary-text');
+            summarySection.classList.remove('hidden');
+            summaryText.textContent = notes.summary;
+        }
+
+        // Display action items
+        if (notes.action_items && notes.action_items.length > 0) {
+            const actionContainer = document.getElementById('action-list');
+            const actionSection = document.getElementById('action-items');
+            actionSection.classList.remove('hidden');
+
+            actionContainer.innerHTML = '';
+            notes.action_items.forEach(action => {
+                const actionItem = document.createElement('div');
+                actionItem.className = 'action-item';
+                actionItem.textContent = action;
+                actionContainer.appendChild(actionItem);
+            });
+        }
+
+        container.classList.remove('hidden');
+    }
+
+    function showError(message) {
+        const errorDiv = document.getElementById('error');
+        errorDiv.textContent = message;
+        errorDiv.classList.remove('hidden');
+    }
+
+    function getCookie(name) {
+        let cookieValue = null;
+        if (document.cookie && document.cookie !== '') {
+            const cookies = document.cookie.split(';');
+            for (let i = 0; i < cookies.length; i++) {
+                const cookie = cookies[i].trim();
+                if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                    cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                    break;
+                }
+            }
+        }
+        return cookieValue;
+    }
+
+    // Allow Enter key to generate notes
+    document.getElementById('video-url').addEventListener('keypress', function (e) {
+        if (e.key === 'Enter') {
+            generateNotes();
+        }
+    });
+</script>
+{% endblock %}

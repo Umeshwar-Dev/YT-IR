@@ -217,8 +217,8 @@ RERANKER_MAX_SEQUENCE_LENGTH = os.getenv("RERANKER_MAX_SEQUENCE_LENGTH", 512)
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
 EMBEDDING_BATCH_SIZE = os.getenv("EMBEDDING_BATCH_SIZE", 32)
 
-INSTANT_LLM = os.getenv("INSTANT_LLM", "llama-3.1-8b-instant")
-POWERFUL_LLM = os.getenv("POWERFUL_LLM", "llama-3.1-8b-instant")
+INSTANT_LLM = os.getenv("INSTANT_LLM", "qwen-qwq-32b")
+POWERFUL_LLM = os.getenv("POWERFUL_LLM", "qwen-qwq-32b")
 
 CHECKPOINT_TABLES = ["checkpoint_blobs", "checkpoint_writes", "checkpoints"]
 
