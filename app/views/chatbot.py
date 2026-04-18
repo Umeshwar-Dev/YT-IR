@@ -1,17 +1,21 @@
 """Chatbot views."""
 
 import asyncio
+import json
 import traceback
+from typing import Dict
 
 import structlog
 from asgiref.sync import sync_to_async
 from django.contrib.auth.decorators import login_required
-from django.contrib.auth.models import User
+from django.contrib.auth.models import AnonymousUser
 from django.http import JsonResponse
 from django.shortcuts import render
-from django.views.decorators.http import require_http_methods
+from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.http import require_POST, require_http_methods
 
 from app.services.agent.main_graph import get_graph_instance
+from app.utils.rate_limiter import RateLimiter, create_retry_decorator
 
 logger = structlog.get_logger(__name__)
 
@@ -68,21 +72,52 @@ async def send_message(request):
         # Get graph instance for the current event loop
         graph = await get_graph_instance()
 
-        # Add timeout to prevent indefinite hanging
+        # Add better error handling and debugging
         try:
-            response = await asyncio.wait_for(
-                graph.process_message(
-                    message=message,
-                    channel=user_channel,
-                    user=user,
-                ),
-                timeout=300,  # 5 minute timeout for Groq rate limit retries
-            )
+            logger.info("Starting agent processing", user_id=user_id, message=message)
+            
+            # Try direct processing first without rate limiter to isolate the issue
+            try:
+                response = await asyncio.wait_for(
+                    graph.process_message(
+                        message=message,
+                        channel=user_channel,
+                        user=user,
+                    ),
+                    timeout=60,  # Shorter timeout for debugging
+                )
+                logger.info("Direct processing successful", user_id=user_id, response_received=response is not None)
+            except Exception as direct_error:
+                logger.error("Direct processing failed", user_id=user_id, error=str(direct_error), traceback=traceback.format_exc())
+                
+                # Try with rate limiter as fallback
+                rate_limiter = RateLimiter(max_retries=2, base_delay=1.0, max_delay=30.0)
+                
+                @create_retry_decorator(max_retries=2, base_delay=1.0, max_delay=30.0)
+                async def process_with_rate_limit():
+                    return await graph.process_message(
+                        message=message,
+                        channel=user_channel,
+                        user=user,
+                    )
+                
+                response = await asyncio.wait_for(
+                    rate_limiter.execute_with_backoff(process_with_rate_limit),
+                    timeout=120,  # 2 minute timeout
+                )
+                logger.info("Rate limited processing successful", user_id=user_id, response_received=response is not None)
+                
         except asyncio.TimeoutError:
             logger.error("Agent processing timed out", user_id=user_id, message=message)
             return JsonResponse(
                 {"error": True, "response": "The request took too long. Please try a simpler question."},
                 status=504,
+            )
+        except Exception as e:
+            logger.error("Agent processing failed completely", user_id=user_id, error=str(e), traceback=traceback.format_exc())
+            return JsonResponse(
+                {"error": True, "response": f"An error occurred: {str(e)}"},
+                status=500,
             )
 
         if response is None:

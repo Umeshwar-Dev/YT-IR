@@ -32,23 +32,29 @@ from app.services.vector_database.tools import (
     SQLTools,
     VectorDatabaseTools,
 )
+from app.utils.rate_limiter import create_retry_decorator
 
 logger = structlog.get_logger(__name__)
 
 # Maximum number of tool call rounds before forcing a final answer
-MAX_TOOL_ITERATIONS = 3
+MAX_TOOL_ITERATIONS = 2  # Reduced from 3 to prevent long processing
 
 tools = [
     VectorDatabaseTools.tool(),
     SQLTools.tool(),
 ]
 
-model = ChatGroq(
-    model_name=settings.POWERFUL_LLM,
-    api_key=os.getenv("GROQ_API_KEY"),
-    temperature=0.0,
-).bind_tools(tools)
+@create_retry_decorator(max_retries=5, base_delay=1.0, max_delay=60.0)
+def create_model():
+    """Create ChatGroq model with rate limiting."""
+    return ChatGroq(
+        model_name=settings.POWERFUL_LLM,
+        api_key=os.getenv("GROQ_API_KEY"),
+        temperature=0.0,
+        max_tokens=2000,  # Further reduced to stay well under 6000 TPM limit
+    ).bind_tools(tools)
 
+model = create_model()
 
 tools_by_name = {tool.name: tool for tool in tools}
 
@@ -125,7 +131,7 @@ async def call_model(
         copy.deepcopy(state.messages),
         strategy="last",
         token_counter=model,
-        max_tokens=6000,
+        max_tokens=5000,  # Further reduced to speed up processing
         start_on="human",
         include_system=False,
         allow_partial=False,

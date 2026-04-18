@@ -7,9 +7,6 @@ from typing import (
     List,
 )
 
-import asyncpg
-import psycopg2
-import psycopg2.extras
 from django.conf import settings
 from langchain.tools import StructuredTool
 
@@ -25,16 +22,7 @@ from app.schemas import SQLQueryToolInput
 class SQLTools:
     """A tool for executing SQL queries and database operations."""
 
-    @classmethod
-    def get_db_connection(cls):
-        """Get a database connection."""
-        return psycopg2.connect(settings.PSYCOPG2_DATABASE_URL)
-
-    @classmethod
-    def close_db_connection(cls, conn):
-        """Close a database connection."""
-        conn.close()
-
+    
     @classmethod
     def get_tables_schema(cls):
         """Retrieve the schema information for all relevant database tables, excluding User table."""
@@ -93,36 +81,15 @@ class SQLTools:
             return f"""DB SCHEMA:\n{cls.get_tables_schema()}\nError: You are allowed only to search in the {video_db_name} and {chunk_db_name} tables"""
 
         try:
-            conn_url = settings.PSYCOPG2_DATABASE_URL
-
-            # Handle SQLite connections
-            if "sqlite" in conn_url.lower():
-                import sqlite3
-                from django.conf import settings as django_settings
-                db_path = django_settings.DATABASES["default"]["NAME"]
-                conn = sqlite3.connect(db_path)
-                conn.row_factory = sqlite3.Row
-                try:
-                    cursor = conn.execute(query)
-                    result = cursor.fetchall()
-                    formated_result = [str(dict(row)) for row in result]
-                    if len(formated_result) > 20:
-                        formated_result.append(
-                            f"The result is too long; truncated to 20 rows from a total of {len(formated_result)} rows."
-                        )
-                        return "\n".join(formated_result[:20])
-                    return "\n".join(formated_result) if formated_result else "No results found."
-                finally:
-                    conn.close()
-
-            # Connect using asyncpg for PostgreSQL
-            conn = await asyncpg.connect(conn_url)
+            import sqlite3
+            from django.conf import settings as django_settings
+            db_path = django_settings.DATABASES["default"]["NAME"]
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
             try:
-                # Execute the query
-                result = await conn.fetch(query)
-
-                # Format the results - asyncpg returns Record objects that need to be converted to dicts
-                formated_result = [str(dict(row.items())) for row in result]
+                cursor = conn.execute(query)
+                result = cursor.fetchall()
+                formated_result = [str(dict(row)) for row in result]
                 if len(formated_result) > 20:
                     formated_result.append(
                         f"The result is too long; truncated to 20 rows from a total of {len(formated_result)} rows."
@@ -130,8 +97,7 @@ class SQLTools:
                     return "\n".join(formated_result[:20])
                 return "\n".join(formated_result) if formated_result else "No results found."
             finally:
-                # Close the connection
-                await conn.close()
+                conn.close()
         except Exception as e:
             return f"""
             DB SCHEMA:
@@ -159,33 +125,13 @@ class SQLTools:
             return f"""DB SCHEMA:\n{cls.get_tables_schema()}\nError: You are allowed only to search in the {video_db_name} and {chunk_db_name} tables"""
 
         try:
-            conn_url = settings.PSYCOPG2_DATABASE_URL
-
-            # Handle SQLite connections
-            if "sqlite" in conn_url.lower():
-                import sqlite3
-                from django.conf import settings as django_settings
-                db_path = django_settings.DATABASES["default"]["NAME"]
-                conn = sqlite3.connect(db_path)
-                conn.row_factory = sqlite3.Row
-                try:
-                    cursor = conn.execute(query)
-                    result = cursor.fetchall()
-                    formated_result = [str(dict(row)) for row in result]
-                    if len(formated_result) > 20:
-                        formated_result.append(
-                            f"The result is too long; truncated to 20 rows from a total of {len(formated_result)} rows."
-                        )
-                        return "\n".join(formated_result[:20])
-                    return "\n".join(formated_result) if formated_result else "No results found."
-                finally:
-                    conn.close()
-
-            # Handle PostgreSQL connections synchronously using psycopg2
-            conn = psycopg2.connect(conn_url)
+            import sqlite3
+            from django.conf import settings as django_settings
+            db_path = django_settings.DATABASES["default"]["NAME"]
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
             try:
-                cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-                cursor.execute(query)
+                cursor = conn.execute(query)
                 result = cursor.fetchall()
                 formated_result = [str(dict(row)) for row in result]
                 if len(formated_result) > 20:
@@ -207,9 +153,6 @@ class SQLTools:
     @classmethod
     def tool(cls) -> StructuredTool:
         """Create a structured tool for executing SQL queries."""
-
-        # Determine SQL syntax hint based on database
-        db_syntax = "SQLITE SYNTAX" if "sqlite" in settings.PSYCOPG2_DATABASE_URL.lower() else "POSTGRES SYNTAX"
         
         return StructuredTool.from_function(
             func=cls.execute_query_sync,
@@ -219,7 +162,7 @@ class SQLTools:
             "- Filtering and aggregating video metadata "
             "- Performing complex calculations or statistical analysis "
             "- Retrieving specific subsets of data not easily accessible through other methods "
-            f"\n Table schema:\n{db_syntax}:\n{cls.get_tables_schema()}",
+            f"\n Table schema:\nSQLITE SYNTAX:\n{cls.get_tables_schema()}",
             args_schema=SQLQueryToolInput,
             handle_tool_error=True,
         )

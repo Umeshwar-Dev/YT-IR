@@ -40,11 +40,6 @@ install-hooks:
 run-hooks:
 	pre-commit run --all-files
 
-build-docker:
-	docker compose --env-file .env up  --build
-
-run-docker:
-	docker compose --env-file .env up
 
 help:
 	@echo "Available commands:"
@@ -59,4 +54,3 @@ help:
 	@echo "  check-all        - Run linting and check formatting"
 	@echo "  install-hooks    - Install pre-commit hooks"
 	@echo "  run-hooks        - Run pre-commit hooks on all files"
-	@echo "  clean            - Remove temporary files"

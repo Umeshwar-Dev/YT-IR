@@ -29,13 +29,11 @@ from langchain_core.messages import (
     trim_messages,
 )
 from langchain_groq import ChatGroq
-from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.graph import (
     END,
     StateGraph,
 )
 from langgraph.graph.state import CompiledStateGraph
-from psycopg_pool import AsyncConnectionPool
 from pydantic import ValidationError
 
 from app.models import (
@@ -97,9 +95,8 @@ class AgentGraph:
             self.evaluator = None
 
     async def setup(self):
-        """Setup the checkpointer and initialize the graph.
+        """Setup and initialize the graph.
 
-        This method initializes the PostgreSQL checkpointer (if available) and builds the agent graph.
         For SQLite development, checkpointer is skipped.
         It ensures all async operations are performed in the current event loop.
         """
@@ -107,69 +104,16 @@ class AgentGraph:
         current_loop = asyncio.get_running_loop()
         logger.debug("Setting up agent graph in event loop", loop_id=id(current_loop))
 
-        # Close existing resources if they exist
-        if self.conn_pool is not None:
-            try:
-                await self.conn_pool.close()
-                await asyncio.sleep(0.1)  # Allow tasks to complete
-            except Exception as e:
-                logger.warning("Error closing existing connection pool", error=e)
-        
-        # Close existing checkpointer if it exists
-        if self.checkpointer is not None:
-            try:
-                await self.checkpointer.aclose()
-                await asyncio.sleep(0.1)  # Allow tasks to complete
-            except Exception as e:
-                logger.warning("Error closing existing checkpointer", error=e)
-
-        # Check if using SQLite (development) or PostgreSQL (production)
-        is_sqlite = "sqlite" in settings.PSYCOPG2_DATABASE_URL.lower()
-        
-        if is_sqlite:
-            logger.info("Using SQLite database - skipping PostgreSQL checkpointer for local development")
-            self.checkpointer = None
-            self.conn_pool = None
-        else:
-            # Initialize the PostgreSQL checkpointer for production
-            logger.info("Using PostgreSQL database - initializing async checkpointer")
-            self.conn_pool = await self.get_pool()
-            self.checkpointer = AsyncPostgresSaver(self.conn_pool)
-            await self.checkpointer.setup()
+        # Using SQLite database - skipping checkpointer for local development
+        logger.info("Using SQLite database - skipping checkpointer for local development")
+        self.checkpointer = None
+        self.conn_pool = None
 
         # Build the graph
         self.graph = self.build_graph()
-        logger.info("Agent graph setup completed", using_checkpointer=(self.checkpointer is not None))
+        logger.info("Agent graph setup completed")
 
-    async def get_pool(self) -> AsyncConnectionPool:
-        """Initialize and return the database connection pool.
-
-        Returns:
-            AsyncConnectionPool: The database connection pool.
-
-        Note:
-            This method ensures the connection pool is created in the current event loop.
-        """
-        logger.info("Initializing database connection pool")
-        # Get the current event loop
-        current_loop = asyncio.get_running_loop()
-        logger.debug("Creating connection pool in event loop", loop_id=id(current_loop))
-
-        # Create a new connection pool in the current event loop
-        conn_pool = AsyncConnectionPool(
-            conninfo=settings.PSYCOPG2_DATABASE_URL,
-            max_size=None,
-            min_size=1,
-            timeout=60,
-            open=False,  # Don't open in constructor to avoid deprecation warning
-            kwargs={"autocommit": True},  # Set autocommit to True to allow CREATE INDEX CONCURRENTLY
-        )
-
-        # Open the pool explicitly as recommended in the deprecation warning
-        await conn_pool.open()
-
-        return conn_pool
-
+    
     async def route_message(self, state: AgentState) -> AgentState:
         """Route the message to the appropriate node.
 
@@ -406,7 +350,7 @@ class AgentGraph:
             Exception: If there's an error during graph execution.
         """
         try:
-            logger.info("Invoking agent graph", message=message)
+            logger.info("Invoking agent graph", message=message, user_id=str(user.id), channel_id=str(channel.id) if channel else None)
 
             # Create initial state with optional channel
             initial_state = {
@@ -417,22 +361,32 @@ class AgentGraph:
             # Only include channel if it's not None
             if channel is not None:
                 initial_state["channel"] = channel
+                logger.debug("Added channel to initial state", channel_id=str(channel.id))
+            else:
+                logger.debug("No channel provided, using single video mode")
 
             config = {
                 "configurable": {
                     "thread_id": str(user.id),
                 },
-                "recursion_limit": 15,
+                "recursion_limit": 10,  # Reduced from 15 to prevent long processing
             }
 
             # Ensure we're in the right event loop context
             current_loop = asyncio.get_running_loop()
             logger.debug("Using event loop", loop_id=id(current_loop))
 
+            # Check if graph is properly initialized
+            if self.graph is None:
+                logger.error("Agent graph is None, cannot process message")
+                raise RuntimeError("Agent graph is not initialized")
+
+            logger.info("Starting graph invocation", recursion_limit=config["recursion_limit"])
+            
             # Invoke the graph
             result = await self.graph.ainvoke(initial_state, config)
 
-            logger.info("Agent graph execution completed successfully")
+            logger.info("Agent graph execution completed successfully", result_keys=list(result.keys()) if result else None)
 
             # Create and track the background task
             task = asyncio.create_task(self._background_add_example(result))
@@ -572,87 +526,14 @@ class AgentGraph:
 
         Returns:
             List[dict]: List of chat messages in the conversation history.
-
-        Raises:
-            Exception: If there's an error fetching the chat history.
         """
         try:
-            # Skip chat history for SQLite (no checkpointer)
-            is_sqlite = "sqlite" in settings.PSYCOPG2_DATABASE_URL.lower()
-            if is_sqlite:
-                logger.info("Using SQLite - chat history not available without PostgreSQL checkpointer")
-                return []
-
-            await self.get_pool()
-
-            # Get the current event loop
-            current_loop = asyncio.get_running_loop()
-            logger.debug("Getting chat history in event loop", loop_id=id(current_loop))
-
-            # Make sure the graph is initialized in the current event loop
-            if self.graph is None:
-                logger.info("Graph not initialized, setting up now")
-                await self.setup()
-
-            # Use a thread-sensitive sync_to_async to ensure proper event loop handling
-            async def get_state():
-                try:
-
-                    @sync_to_async(thread_sensitive=True)
-                    def _get_state():
-                        try:
-                            return self.graph.get_state(config={"configurable": {"thread_id": user_id}})
-                        except Exception as e:
-                            logger.warning("Error getting graph state (possibly due to schema change), returning empty state", error=e)
-                            # Return empty state when checkpoint validation fails
-                            return {"values": {}, "next": [], "metadata": {}}
-
-                    return await _get_state()
-                except RuntimeError as e:
-                    logger.error("Event loop error during state retrieval", error=e, traceback=traceback.format_exc())
-                    return None
-
-            state = await get_state()
-
-            if not state:
-                return []
-
-            original_messages: List[BaseMessage] = state.get("messages", []) if hasattr(state, 'get') else state.values.get("messages", [])
-
-            def process_message(msg: Dict[str, Any]) -> Optional[ChatMessage]:
-                """Process a single message from the chat history."""
-                content = msg["data"]["content"].strip()
-                msg_type = msg.get("type")
-
-                if msg_type == "ai" and not msg["data"].get("tool_call") and msg["data"].get("content"):
-                    try:
-                        validated_msg = AgentOutput.model_validate_json(content)
-                        return ChatMessage(
-                            placeholder=validated_msg.placeholder,
-                            videos=validated_msg.videos,
-                            type="ai",
-                        )
-                    except (JSONDecodeError, ValidationError):
-                        return ChatMessage(placeholder=content, videos=None, type="ai")
-
-                elif msg_type == "human":
-                    if '"videos":' in content:
-                        return None
-                    return ChatMessage(placeholder=content, videos=None, type="human")
-
-                return None
-
-            updated_messages = [
-                processed_msg
-                for msg in messages_to_dict(original_messages)
-                if (processed_msg := process_message(msg)) is not None
-            ]
-
-            return updated_messages
-
+            # Using SQLite - chat history not available without checkpointer
+            logger.info("Using SQLite - chat history not available")
+            return []
         except Exception as e:
             logger.error("Failed to fetch chat history", type="error", error=str(e), traceback=traceback.format_exc())
-            raise
+            return []
 
     async def clear_chat_history(self, user_id: str) -> None:
         """Clear all chat history for a given thread ID.
@@ -664,42 +545,17 @@ class AgentGraph:
             Exception: If there's an error clearing the chat history.
         """
         try:
-            # Skip for SQLite (no checkpointer)
-            is_sqlite = "sqlite" in settings.PSYCOPG2_DATABASE_URL.lower()
-            if is_sqlite:
-                logger.info("Using SQLite - no chat history to clear")
-                return
-
-            # Get the current event loop
-            current_loop = asyncio.get_running_loop()
-            logger.debug("Clearing chat history in event loop", loop_id=id(current_loop))
-
-            # Make sure the pool is initialized in the current event loop
-            conn_pool = await self.get_pool()
-
-            # Use a new connection for this specific operation
-            async with conn_pool.connection() as conn:
-                for table in settings.CHECKPOINT_TABLES:
-                    try:
-                        await conn.execute(f"DELETE FROM {table} WHERE thread_id = %s", (user_id,))
-                        logger.info(f"Cleared {table} for user {user_id}")
-                    except Exception as e:
-                        logger.error(f"Error clearing {table}", error=e, traceback=traceback.format_exc())
-                        raise
-
+            # Using SQLite - no chat history to clear
+            logger.info("Using SQLite - no chat history to clear")
+            return
         except Exception as e:
             logger.error("Failed to clear chat history", error=str(e), traceback=traceback.format_exc())
-            raise
 
     async def cleanup(self):
         """Cleanup resources properly."""
         try:
-            if self.checkpointer is not None:
-                await self.checkpointer.aclose()
-                self.checkpointer = None
-            if self.conn_pool is not None:
-                await self.conn_pool.close()
-                self.conn_pool = None
+            # No PostgreSQL resources to cleanup in SQLite mode
+            logger.info("Cleanup completed - no PostgreSQL resources to cleanup")
             logger.info("AgentGraph resources cleaned up successfully")
         except Exception as e:
             logger.error("Error during cleanup", error=e)
@@ -732,19 +588,9 @@ async def get_graph_instance():
             _graph_instance = AgentGraph()
             await _graph_instance.setup()
         else:
-            # Check if we need to reinitialize due to event loop changes
-            try:
-                # Try a simple operation to check if the instance is usable
-                await _graph_instance.get_pool()
-            except (RuntimeError, asyncio.InvalidStateError) as e:
-                error_msg = str(e)
-                if "is bound to a different event loop" in error_msg or "Event loop is closed" in error_msg:
-                    logger.warning("Existing graph instance has event loop issues, reinitializing", error=error_msg)
-                    _graph_instance = AgentGraph()
-                    await _graph_instance.setup()
-                else:
-                    logger.error("Error checking graph instance", error=e, traceback=traceback.format_exc())
-                    raise
+            # For SQLite mode, the graph instance doesn't need event loop checks
+            # SQLite doesn't use connection pools or checkpointer, so we can reuse the instance
+            pass
 
         return _graph_instance
     except Exception as e:
